@@ -28,6 +28,17 @@ final class InMemoryUpdateExecutionStore implements UpdateExecutionStore
         return $this->cycles[$cycleId] ?? throw new RuntimeException('update_cycle_not_found');
     }
 
+    public function findUnfinished(): ?UpdateCycleSnapshot
+    {
+        foreach ($this->cycles as $cycle) {
+            if ($cycle->state->isUnfinished()) {
+                return $cycle;
+            }
+        }
+
+        return null;
+    }
+
     public function create(UpdateCycleSnapshot $snapshot): UpdateCycleSnapshot
     {
         if ($snapshot->revision !== 1

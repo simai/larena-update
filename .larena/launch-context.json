@@ -53,7 +53,20 @@
     "src/Release/RecordingReleaseActivation.php",
     "src/Release/ReleasePointer.php",
     "src/Release/ReleaseCleanup.php",
-    "tests/Unit/ReleaseLayoutTest.php"
+    "tests/Unit/ReleaseLayoutTest.php",
+    "src/Data/ReleaseTransition.php",
+    "src/Release/UpdatePreflight.php",
+    "src/Release/SiteBackup.php",
+    "src/Release/SiteBackupCopy.php",
+    "src/Release/DatabaseRestore.php",
+    "src/Release/MaintenanceMode.php",
+    "src/Release/ReleaseMigrations.php",
+    "src/Release/SiteHealth.php",
+    "src/Release/ReleaseCycleLock.php",
+    "src/Release/ReleaseRollbackOutcome.php",
+    "src/Release/ReleaseUpdateCycle.php",
+    "src/Release/RecordingUpdateSite.php",
+    "tests/Unit/ReleaseUpdateCycleTest.php"
   ],
   "forbidden_files": [
     "config/*",

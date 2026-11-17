@@ -24,6 +24,7 @@ final readonly class UpdateCycleSnapshot
         public ?string $failedStep = null,
         public ?string $reasonCode = null,
         public ?RollbackBoundary $rollbackBoundary = null,
+        public ?ReleaseTransition $release = null,
     ) {
         if (preg_match('/\A[a-f0-9]{32}\z/D', $this->cycleId) !== 1 || $this->cycleId !== $this->request->cycleId()) {
             throw new InvalidArgumentException('update_cycle_id_invalid');
@@ -59,6 +60,7 @@ final readonly class UpdateCycleSnapshot
         ?string $reasonCode = null,
         ?RollbackBoundary $rollbackBoundary = null,
         ?int $attempt = null,
+        ?ReleaseTransition $release = null,
     ): self {
         return new self(
             $this->cycleId,
@@ -71,6 +73,7 @@ final readonly class UpdateCycleSnapshot
             $failedStep,
             $reasonCode,
             $rollbackBoundary,
+            $release ?? $this->release,
         );
     }
 }

@@ -17,6 +17,7 @@ use Larena\UpdateClient\Contracts\EntitlementSnapshot;
 use Larena\UpdateClient\Contracts\RollbackBoundary;
 use Larena\UpdateClient\Contracts\UpdateExecutionStore;
 use Larena\UpdateClient\Contracts\UpdateManifest;
+use Larena\UpdateClient\Data\ReleaseTransition;
 use Larena\UpdateClient\Data\UpdateCycleRequest;
 use Larena\UpdateClient\Data\UpdateCycleSnapshot;
 use Larena\UpdateClient\Enums\ArtifactVerificationStatus;
@@ -68,6 +69,16 @@ final readonly class PdoUpdateExecutionStore implements UpdateExecutionStore
         $row = $statement->fetchColumn();
 
         return is_string($row) ? self::decode($row) : throw new RuntimeException('update_cycle_not_found');
+    }
+
+    public function findUnfinished(): ?UpdateCycleSnapshot
+    {
+        $states = array_values(array_filter(UpdateCycleState::cases(), static fn (UpdateCycleState $state): bool => $state->isUnfinished()));
+        $statement = $this->pdo->prepare('SELECT snapshot FROM '.self::TABLE.' WHERE state IN ('.implode(', ', array_fill(0, count($states), '?')).') ORDER BY updated_at LIMIT 1');
+        $statement->execute(array_map(static fn (UpdateCycleState $state): string => $state->value, $states));
+        $row = $statement->fetchColumn();
+
+        return is_string($row) ? self::decode($row) : null;
     }
 
     public function create(UpdateCycleSnapshot $snapshot): UpdateCycleSnapshot
@@ -128,6 +139,11 @@ final readonly class PdoUpdateExecutionStore implements UpdateExecutionStore
                 'dry_run_completed' => $rollback->dryRunCompleted,
                 'irreversible_steps_declared' => $rollback->irreversibleStepsDeclared,
                 'approval_required' => $rollback->approvalRequired,
+            ],
+            'release' => $snapshot->release === null ? null : [
+                'from' => $snapshot->release->from,
+                'to' => $snapshot->release->to,
+                'backward_incompatible_migrations' => $snapshot->release->backwardIncompatibleMigrations,
             ],
             'request' => [
                 'actor_ref' => $request->actorRef,
@@ -198,6 +214,7 @@ final readonly class PdoUpdateExecutionStore implements UpdateExecutionStore
             $f = $r['artifact_file'];
             $b = $f['blob'];
             $rb = $d['rollback'];
+            $rl = $d['release'] ?? null;
             $request = new UpdateCycleRequest(
                 actorRef: $r['actor_ref'],
                 correlationRef: $r['correlation_ref'],
@@ -235,6 +252,7 @@ final readonly class PdoUpdateExecutionStore implements UpdateExecutionStore
                 rollbackBoundary: $rb === null ? null : new RollbackBoundary(
                     $rb['backup_plan_ref'], $rb['snapshot_ref'], $rb['dry_run_completed'], $rb['irreversible_steps_declared'], $rb['approval_required'],
                 ),
+                release: $rl === null ? null : new ReleaseTransition($rl['from'], $rl['to'], $rl['backward_incompatible_migrations']),
             );
         } catch (JsonException|Throwable) {
             throw new RuntimeException('update_cycle_record_invalid');
