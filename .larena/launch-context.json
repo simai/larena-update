@@ -44,7 +44,16 @@
     "src/Release/VerifiedRelease.php",
     "src/Runtime/PdoUpdateExecutionStore.php",
     "tests/Unit/PdoUpdateExecutionStoreTest.php",
-    "tests/Unit/ReleaseSignatureVerifierTest.php"
+    "tests/Unit/ReleaseSignatureVerifierTest.php",
+    "src/Release/ReleaseDirectory.php",
+    "src/Release/ReleaseArchiveExtractor.php",
+    "src/Release/ReleaseSharedLinks.php",
+    "src/Release/ReleaseSwitch.php",
+    "src/Release/ReleaseActivation.php",
+    "src/Release/RecordingReleaseActivation.php",
+    "src/Release/ReleasePointer.php",
+    "src/Release/ReleaseCleanup.php",
+    "tests/Unit/ReleaseLayoutTest.php"
   ],
   "forbidden_files": [
     "config/*",
@@ -62,9 +71,8 @@
   ],
   "forbidden_behavior": [
     "network_fetch_runtime",
-    "real_artifact_download_or_extraction",
-    "installed_site_filesystem_or_database_mutation",
-    "migration_or_release_pointer_execution",
+    "real_artifact_download",
+    "migration_execution",
     "direct_registration_server_contact",
     "real_signing_material_or_credentials",
     "production_installer_or_readiness_claim"
