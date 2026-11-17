@@ -18,10 +18,11 @@ runtime:
 runtime_boundaries:
   canonical_local_runtime_owner: true
   server_catalog_authority: false
-  network_fetch_enabled: false
-  real_artifact_apply_enabled: false
-  installed_site_mutation_enabled: false
-  reference_store: in_memory_only
+  network_fetch_enabled: true          # signed releases over HTTPS from the configured sources
+  real_artifact_apply_enabled: true    # larena:update:apply, operator-started only
+  installed_site_mutation_enabled: true
+  reference_store: update_cycles_table
+  trusted_release_keys: config_only    # none shipped; every release is refused until keys are configured
   production_ready: false
 evidence:
   path: docs/project-management/evidence/larena-specification-g4/g4-8/update-ownership-reconciliation/

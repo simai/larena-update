@@ -81,6 +81,39 @@ final readonly class PdoUpdateExecutionStore implements UpdateExecutionStore
         return is_string($row) ? self::decode($row) : null;
     }
 
+    /**
+     * Every unfinished cycle, oldest first (the preflight refuses a second one).
+     *
+     * @return list<UpdateCycleSnapshot>
+     */
+    public function unfinished(): array
+    {
+        $states = array_values(array_filter(UpdateCycleState::cases(), static fn (UpdateCycleState $state): bool => $state->isUnfinished()));
+        $statement = $this->pdo->prepare('SELECT snapshot FROM '.self::TABLE.' WHERE state IN ('.implode(', ', array_fill(0, count($states), '?')).') ORDER BY updated_at');
+        $statement->execute(array_map(static fn (UpdateCycleState $state): string => $state->value, $states));
+
+        return array_map(self::decode(...), array_values(array_filter($statement->fetchAll(PDO::FETCH_COLUMN), 'is_string')));
+    }
+
+    /**
+     * The most recently changed cycles, newest first, each with the time of its last change (for status and rollback).
+     *
+     * @return list<array{snapshot: UpdateCycleSnapshot, updated_at: string}>
+     */
+    public function latest(int $limit = 10): array
+    {
+        $statement = $this->pdo->prepare('SELECT snapshot, updated_at FROM '.self::TABLE.' ORDER BY updated_at DESC, revision DESC LIMIT '.max(1, min(100, $limit)));
+        $statement->execute();
+        $cycles = [];
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            if (is_array($row) && is_string($row['snapshot'] ?? null)) {
+                $cycles[] = ['snapshot' => self::decode($row['snapshot']), 'updated_at' => (string) ($row['updated_at'] ?? '')];
+            }
+        }
+
+        return $cycles;
+    }
+
     public function create(UpdateCycleSnapshot $snapshot): UpdateCycleSnapshot
     {
         if ($snapshot->revision !== 1) {
