@@ -1,0 +1,243 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Larena\UpdateClient\Runtime;
+
+use DateTimeImmutable;
+use JsonException;
+use Larena\Filesystem\Enums\FileLifecycleClass;
+use Larena\Filesystem\Enums\FileVisibility;
+use Larena\Filesystem\Runtime\ArrayLogicalFile;
+use Larena\Filesystem\Runtime\ArrayStorageBlobReference;
+use Larena\Licensing\Enums\EntitlementStatus;
+use Larena\Licensing\Runtime\StaticCapability;
+use Larena\UpdateClient\Contracts\ArtifactVerificationResult;
+use Larena\UpdateClient\Contracts\EntitlementSnapshot;
+use Larena\UpdateClient\Contracts\RollbackBoundary;
+use Larena\UpdateClient\Contracts\UpdateExecutionStore;
+use Larena\UpdateClient\Contracts\UpdateManifest;
+use Larena\UpdateClient\Data\UpdateCycleRequest;
+use Larena\UpdateClient\Data\UpdateCycleSnapshot;
+use Larena\UpdateClient\Enums\ArtifactVerificationStatus;
+use Larena\UpdateClient\Enums\UpdateCycleState;
+use PDO;
+use PDOException;
+use RuntimeException;
+use Throwable;
+
+/**
+ * Keeps update cycles in the site's own database (table `update_cycles`), so a cycle survives a restart, a failed
+ * step and the code switch itself (plan docs/architecture/2026-11-17-update-client-plan.md, §3).
+ *
+ * A save succeeds only from the revision the caller read (optimistic lock in the UPDATE itself); two processes can
+ * never both advance one cycle. The snapshot is kept whole as JSON next to the columns that are queried.
+ */
+final readonly class PdoUpdateExecutionStore implements UpdateExecutionStore
+{
+    public const TABLE = 'update_cycles';
+
+    public function __construct(private PDO $pdo)
+    {
+        $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    }
+
+    /** Statements that create the table for this PDO's driver (sqlite or mysql); a site migration runs them. */
+    public static function schema(string $driver): string
+    {
+        return match ($driver) {
+            'sqlite' => 'CREATE TABLE IF NOT EXISTS '.self::TABLE.' (cycle_id CHAR(32) PRIMARY KEY, idempotency_key VARCHAR(128) NOT NULL UNIQUE, revision INTEGER NOT NULL, state VARCHAR(32) NOT NULL, snapshot TEXT NOT NULL, updated_at VARCHAR(32) NOT NULL)',
+            'mysql' => 'CREATE TABLE IF NOT EXISTS '.self::TABLE.' (cycle_id CHAR(32) NOT NULL PRIMARY KEY, idempotency_key VARCHAR(128) NOT NULL, revision INT UNSIGNED NOT NULL, state VARCHAR(32) NOT NULL, snapshot MEDIUMTEXT NOT NULL, updated_at VARCHAR(32) NOT NULL, UNIQUE KEY update_cycles_idempotency_unique (idempotency_key), KEY update_cycles_state_index (state)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci',
+            default => throw new RuntimeException('update_cycle_store_driver_unsupported'),
+        };
+    }
+
+    public function findByIdempotencyKey(string $idempotencyKey): ?UpdateCycleSnapshot
+    {
+        $statement = $this->pdo->prepare('SELECT snapshot FROM '.self::TABLE.' WHERE idempotency_key = ?');
+        $statement->execute([$idempotencyKey]);
+        $row = $statement->fetchColumn();
+
+        return is_string($row) ? self::decode($row) : null;
+    }
+
+    public function require(string $cycleId): UpdateCycleSnapshot
+    {
+        $statement = $this->pdo->prepare('SELECT snapshot FROM '.self::TABLE.' WHERE cycle_id = ?');
+        $statement->execute([$cycleId]);
+        $row = $statement->fetchColumn();
+
+        return is_string($row) ? self::decode($row) : throw new RuntimeException('update_cycle_not_found');
+    }
+
+    public function create(UpdateCycleSnapshot $snapshot): UpdateCycleSnapshot
+    {
+        if ($snapshot->revision !== 1) {
+            throw new RuntimeException('update_cycle_duplicate');
+        }
+        try {
+            $this->pdo->prepare('INSERT INTO '.self::TABLE.' (cycle_id, idempotency_key, revision, state, snapshot, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+                ->execute([$snapshot->cycleId, $snapshot->request->idempotencyKey, 1, $snapshot->state->value, self::encode($snapshot), self::now()]);
+        } catch (PDOException) {
+            throw new RuntimeException('update_cycle_duplicate');
+        }
+
+        return $snapshot;
+    }
+
+    public function save(UpdateCycleSnapshot $snapshot, int $expectedRevision): UpdateCycleSnapshot
+    {
+        if ($snapshot->revision !== $expectedRevision + 1) {
+            throw new RuntimeException('update_cycle_stale_state');
+        }
+        $statement = $this->pdo->prepare('UPDATE '.self::TABLE.' SET revision = ?, state = ?, snapshot = ?, updated_at = ? WHERE cycle_id = ? AND revision = ? AND idempotency_key = ?');
+        $statement->execute([$snapshot->revision, $snapshot->state->value, self::encode($snapshot), self::now(), $snapshot->cycleId, $expectedRevision, $snapshot->request->idempotencyKey]);
+        if ($statement->rowCount() !== 1) {
+            $this->require($snapshot->cycleId);
+            throw new RuntimeException('update_cycle_stale_state');
+        }
+
+        return $snapshot;
+    }
+
+    private static function now(): string
+    {
+        return (new DateTimeImmutable('now'))->format(DATE_ATOM);
+    }
+
+    private static function encode(UpdateCycleSnapshot $snapshot): string
+    {
+        $request = $snapshot->request;
+        $file = $request->artifactFile;
+        $blob = $file->blob();
+        $entitlement = $request->entitlement;
+        $rollback = $snapshot->rollbackBoundary;
+
+        return json_encode([
+            'cycle_id' => $snapshot->cycleId,
+            'state' => $snapshot->state->value,
+            'attempt' => $snapshot->attempt,
+            'revision' => $snapshot->revision,
+            'next_step_index' => $snapshot->nextStepIndex,
+            'completed_steps' => $snapshot->completedSteps,
+            'failed_step' => $snapshot->failedStep,
+            'reason_code' => $snapshot->reasonCode,
+            'rollback' => $rollback === null ? null : [
+                'backup_plan_ref' => $rollback->backupPlanRef,
+                'snapshot_ref' => $rollback->snapshotRef,
+                'dry_run_completed' => $rollback->dryRunCompleted,
+                'irreversible_steps_declared' => $rollback->irreversibleStepsDeclared,
+                'approval_required' => $rollback->approvalRequired,
+            ],
+            'request' => [
+                'actor_ref' => $request->actorRef,
+                'correlation_ref' => $request->correlationRef,
+                'idempotency_key' => $request->idempotencyKey,
+                'plan_key' => $request->planKey,
+                'steps' => $request->steps,
+                'manifest' => [
+                    'manifest_key' => $request->manifest->manifestKey,
+                    'channel' => $request->manifest->channel,
+                    'package_refs' => $request->manifest->packageRefs,
+                    'signature_ref' => $request->manifest->signatureRef,
+                    'signature_verified' => $request->manifest->signatureVerified,
+                ],
+                'entitlement' => [
+                    'snapshot_key' => $entitlement->snapshotKey,
+                    'site_identity' => $entitlement->siteIdentity,
+                    'capabilities' => $entitlement->capabilities,
+                    'redacted' => $entitlement->redacted,
+                    'signed' => $entitlement->signed,
+                    'signature_verified' => $entitlement->signatureVerified,
+                    'direct_registration_contact' => $entitlement->directRegistrationContact,
+                    'status' => $entitlement->entitlementStatus->value,
+                    'signing_key_id' => $entitlement->signingKeyId,
+                    'signature_value' => $entitlement->signatureValue,
+                    'valid_until' => $entitlement->validUntil?->format(DATE_ATOM),
+                ],
+                'capability' => [
+                    'key' => $request->capability->key(),
+                    'package' => $request->capability->package(),
+                    'free_by_default' => $request->capability->isFreeByDefault(),
+                    'fail_closed_when_unknown' => $request->capability->failClosedWhenUnknown(),
+                ],
+                'artifact' => [
+                    'artifact_key' => $request->artifact->artifactKey,
+                    'checksum' => $request->artifact->checksum,
+                    'signature_ref' => $request->artifact->signatureRef,
+                    'manifest_binding' => $request->artifact->manifestBinding,
+                    'status' => $request->artifact->status->value,
+                    'channel_matched' => $request->artifact->channelMatched,
+                    'compatible' => $request->artifact->compatible,
+                ],
+                'artifact_file' => [
+                    'id' => $file->id(),
+                    'stable_public_id' => $file->stablePublicId(),
+                    'visibility' => $file->visibility()->value,
+                    'lifecycle_class' => $file->lifecycleClass()->value,
+                    'blob' => [
+                        'sha256' => $blob->sha256(),
+                        'storage_profile' => $blob->storageProfile(),
+                        'size_bytes' => $blob->sizeBytes(),
+                        'mime_type' => $blob->mimeType(),
+                    ],
+                ],
+            ],
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    }
+
+    private static function decode(string $json): UpdateCycleSnapshot
+    {
+        try {
+            $d = json_decode($json, true, 16, JSON_THROW_ON_ERROR);
+            $r = $d['request'];
+            $m = $r['manifest'];
+            $e = $r['entitlement'];
+            $c = $r['capability'];
+            $a = $r['artifact'];
+            $f = $r['artifact_file'];
+            $b = $f['blob'];
+            $rb = $d['rollback'];
+            $request = new UpdateCycleRequest(
+                actorRef: $r['actor_ref'],
+                correlationRef: $r['correlation_ref'],
+                idempotencyKey: $r['idempotency_key'],
+                planKey: $r['plan_key'],
+                manifest: new UpdateManifest($m['manifest_key'], $m['channel'], $m['package_refs'], $m['signature_ref'], $m['signature_verified']),
+                entitlement: new EntitlementSnapshot(
+                    $e['snapshot_key'], $e['site_identity'], $e['capabilities'], $e['redacted'], $e['signed'], $e['signature_verified'],
+                    $e['direct_registration_contact'], EntitlementStatus::from($e['status']), $e['signing_key_id'], $e['signature_value'],
+                    $e['valid_until'] === null ? null : new DateTimeImmutable($e['valid_until']),
+                ),
+                capability: new StaticCapability($c['key'], $c['package'], $c['free_by_default'], $c['fail_closed_when_unknown']),
+                artifact: new ArtifactVerificationResult(
+                    $a['artifact_key'], $a['checksum'], $a['signature_ref'], $a['manifest_binding'],
+                    ArtifactVerificationStatus::from($a['status']), $a['channel_matched'], $a['compatible'],
+                ),
+                artifactFile: new ArrayLogicalFile(
+                    $f['id'], $f['stable_public_id'],
+                    new ArrayStorageBlobReference($b['sha256'], $b['storage_profile'], $b['size_bytes'], $b['mime_type']),
+                    FileVisibility::from($f['visibility']), FileLifecycleClass::from($f['lifecycle_class']),
+                ),
+                steps: $r['steps'],
+            );
+
+            return new UpdateCycleSnapshot(
+                cycleId: $d['cycle_id'],
+                request: $request,
+                state: UpdateCycleState::from($d['state']),
+                attempt: $d['attempt'],
+                revision: $d['revision'],
+                nextStepIndex: $d['next_step_index'],
+                completedSteps: $d['completed_steps'],
+                failedStep: $d['failed_step'],
+                reasonCode: $d['reason_code'],
+                rollbackBoundary: $rb === null ? null : new RollbackBoundary(
+                    $rb['backup_plan_ref'], $rb['snapshot_ref'], $rb['dry_run_completed'], $rb['irreversible_steps_declared'], $rb['approval_required'],
+                ),
+            );
+        } catch (JsonException|Throwable) {
+            throw new RuntimeException('update_cycle_record_invalid');
+        }
+    }
+}

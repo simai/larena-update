@@ -39,7 +39,12 @@
     "NOTICE",
     "AUTHORS",
     "CITATION.cff",
-    "REUSE.toml"
+    "REUSE.toml",
+    "src/Release/ReleaseSignatureVerifier.php",
+    "src/Release/VerifiedRelease.php",
+    "src/Runtime/PdoUpdateExecutionStore.php",
+    "tests/Unit/PdoUpdateExecutionStoreTest.php",
+    "tests/Unit/ReleaseSignatureVerifierTest.php"
   ],
   "forbidden_files": [
     "config/*",
