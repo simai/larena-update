@@ -43,6 +43,44 @@ final readonly class ReleasePointer
         return ReleaseDirectory::id($match[1]);
     }
 
+    /**
+     * The version the release `current` points to runs: the `version` of its `.larena-release` marker (written by
+     * {@see ReleaseArchiveExtractor}, and by the installer for the release it installs), else the release id when it
+     * is a version itself. A release whose version is not known cannot be updated (`release_version_unknown`): the
+     * signed release must be compared with what runs.
+     */
+    public function currentVersion(): ?string
+    {
+        $current = $this->current();
+
+        return $current === null ? null : self::version($this->site . '/releases/' . $current, $current);
+    }
+
+    /** The version of one release folder; see {@see currentVersion()}. */
+    public static function version(string $releaseDirectory, string $releaseId): string
+    {
+        $marker = rtrim($releaseDirectory, '/') . '/' . ReleaseArchiveExtractor::MARKER;
+        if (is_file($marker) && !is_link($marker)) {
+            $data = json_decode((string) file_get_contents($marker, length: 4096), true);
+            $version = is_array($data) ? ($data['version'] ?? null) : null;
+            if (!is_string($version) || !self::isVersion($version)) {
+                throw new RuntimeException('release_version_unknown');
+            }
+
+            return $version;
+        }
+        if (self::isVersion($releaseId)) {
+            return $releaseId;
+        }
+
+        throw new RuntimeException('release_version_unknown');
+    }
+
+    private static function isVersion(string $value): bool
+    {
+        return preg_match('/\A(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,7})\z/D', $value) === 1;
+    }
+
     public function switchTo(string $releaseId): ReleaseSwitch
     {
         $id = ReleaseDirectory::id($releaseId);

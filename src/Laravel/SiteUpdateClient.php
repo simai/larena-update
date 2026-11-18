@@ -38,8 +38,36 @@ use RuntimeException;
 final readonly class SiteUpdateClient
 {
     /**
+     * The public release keys the distribution ships (plan §2): `config/larena-release-keys.php` of the site,
+     * `key id => base64 public key`, read by Laravel as the `larena-release-keys` configuration.
+     */
+    public const RELEASE_KEYS_CONFIG = 'larena-release-keys';
+
+    /**
+     * The `update-client` configuration with the distribution's release keys added to `trusted_keys`. The same key
+     * id with another key in both places is refused (`release_trusted_key_conflict`): one id names one key.
+     *
+     * @param array<string,mixed> $config
+     * @return array<string,mixed>
+     */
+    public static function withReleaseKeys(array $config, mixed $releaseKeys): array
+    {
+        $keys = is_array($config['trusted_keys'] ?? null) ? $config['trusted_keys'] : [];
+        foreach (is_array($releaseKeys) ? $releaseKeys : [] as $id => $key) {
+            if (array_key_exists($id, $keys) && $keys[$id] !== $key) {
+                throw new RuntimeException('release_trusted_key_conflict');
+            }
+            $keys[$id] = $key;
+        }
+        $config['trusted_keys'] = $keys;
+
+        return $config;
+    }
+
+    /**
      * @param array<string,mixed> $config the `update-client` configuration
-     * @param Closure(): PDO      $database the site database connection
+     * @param Closure(): PDO      $database  the site database connection
+     * @param (Closure(): PDO)|null $reconnect a new connection to the site database (after a restore replaced it)
      */
     public function __construct(
         private array $config,
@@ -49,6 +77,7 @@ final readonly class SiteUpdateClient
         private LoggerInterface $logger,
         private UpdateHttpClient $http,
         private ArtisanRunner $artisan,
+        private ?Closure $reconnect = null,
     ) {
     }
 
@@ -70,7 +99,14 @@ final readonly class SiteUpdateClient
         return ReleaseDirectory::site(dirname($release, 2));
     }
 
+    /** The version the live release runs (its `.larena-release` marker, or its id when that is a version). */
     public function installedVersion(): string
+    {
+        return (new ReleasePointer($this->siteRoot()))->currentVersion() ?? throw new RuntimeException('release_current_missing');
+    }
+
+    /** The release folder `current` points to (`releases/<release>`). */
+    public function installedRelease(): string
     {
         return (new ReleasePointer($this->siteRoot()))->current() ?? throw new RuntimeException('release_current_missing');
     }
@@ -107,7 +143,7 @@ final readonly class SiteUpdateClient
 
     public function store(): PdoUpdateExecutionStore
     {
-        return new PdoUpdateExecutionStore(($this->database)());
+        return new PdoUpdateExecutionStore(($this->database)(), $this->reconnect);
     }
 
     public function verifier(): ReleaseSignatureVerifier

@@ -46,7 +46,7 @@ final class UpdateClientServiceProvider extends ServiceProvider
             $config = $app->make(ConfigRepository::class);
 
             return new SiteUpdateClient(
-                (array) $config->get('update-client', []),
+                SiteUpdateClient::withReleaseKeys((array) $config->get('update-client', []), $config->get(SiteUpdateClient::RELEASE_KEYS_CONFIG)),
                 $app->basePath(),
                 (string) $config->get('app.url', 'http://localhost'),
                 static function () use ($app): PDO {
@@ -58,6 +58,12 @@ final class UpdateClientServiceProvider extends ServiceProvider
                 $app->make(LoggerInterface::class),
                 $app->make(UpdateHttpClient::class),
                 $app->make(ArtisanRunner::class),
+                static function () use ($app): PDO {
+                    /** @var DatabaseManager $database */
+                    $database = $app->make(DatabaseManager::class);
+
+                    return $database->reconnect()->getPdo();
+                },
             );
         });
     }

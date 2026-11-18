@@ -32,7 +32,7 @@ final class UpdateRollbackCommand extends UpdateCommand
             $store = $client->store();
             $cycleId = trim((string) $this->option('cycle'));
             if ($cycleId === '') {
-                $current = $client->installedVersion();
+                $current = $client->installedRelease();
                 foreach ($store->latest(50) as $row) {
                     $candidate = $row['snapshot'];
                     if ($candidate->state === UpdateCycleState::Completed && $candidate->release?->to === $current) {

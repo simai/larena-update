@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Larena\UpdateClient\Runtime;
 
+use Closure;
 use DateTimeImmutable;
 use JsonException;
 use Larena\Filesystem\Enums\FileLifecycleClass;
@@ -15,7 +16,7 @@ use Larena\Licensing\Runtime\StaticCapability;
 use Larena\UpdateClient\Contracts\ArtifactVerificationResult;
 use Larena\UpdateClient\Contracts\EntitlementSnapshot;
 use Larena\UpdateClient\Contracts\RollbackBoundary;
-use Larena\UpdateClient\Contracts\UpdateExecutionStore;
+use Larena\UpdateClient\Contracts\RestoreAwareExecutionStore;
 use Larena\UpdateClient\Contracts\UpdateManifest;
 use Larena\UpdateClient\Data\ReleaseTransition;
 use Larena\UpdateClient\Data\UpdateCycleRequest;
@@ -33,14 +34,60 @@ use Throwable;
  *
  * A save succeeds only from the revision the caller read (optimistic lock in the UPDATE itself); two processes can
  * never both advance one cycle. The snapshot is kept whole as JSON next to the columns that are queried.
+ *
+ * The table is in the database a rollback restores: {@see history()} and {@see reinstate()} carry the cycles over a
+ * restore, and `$reconnect` gives the connection to the restored database (a replaced SQLite file is a new file).
  */
-final readonly class PdoUpdateExecutionStore implements UpdateExecutionStore
+final class PdoUpdateExecutionStore implements RestoreAwareExecutionStore
 {
     public const TABLE = 'update_cycles';
+    private const COLUMNS = ['cycle_id', 'idempotency_key', 'revision', 'state', 'snapshot', 'updated_at'];
 
-    public function __construct(private PDO $pdo)
+    /** @param (Closure(): PDO)|null $reconnect a fresh connection to the same database; without it the open one is kept */
+    public function __construct(private PDO $pdo, private readonly ?Closure $reconnect = null)
     {
         $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    }
+
+    public function history(): array
+    {
+        $rows = [];
+        foreach ($this->pdo->query('SELECT '.implode(', ', self::COLUMNS).' FROM '.self::TABLE.' ORDER BY updated_at, cycle_id')->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            if (is_array($row)) {
+                $rows[] = array_map(static fn (mixed $value): int|string => is_int($value) ? $value : (string) $value, $row);
+            }
+        }
+
+        return $rows;
+    }
+
+    public function reinstate(array $history): void
+    {
+        if ($this->reconnect !== null) {
+            $this->pdo = ($this->reconnect)();
+            $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        }
+        $this->pdo->beginTransaction();
+        try {
+            $delete = $this->pdo->prepare('DELETE FROM '.self::TABLE.' WHERE cycle_id = ? OR idempotency_key = ?');
+            $insert = $this->pdo->prepare('INSERT INTO '.self::TABLE.' ('.implode(', ', self::COLUMNS).') VALUES (?, ?, ?, ?, ?, ?)');
+            foreach ($history as $row) {
+                $values = [];
+                foreach (self::COLUMNS as $column) {
+                    $value = $row[$column] ?? null;
+                    if (!is_int($value) && !is_string($value)) {
+                        throw new RuntimeException('update_cycle_record_invalid');
+                    }
+                    $values[] = $value;
+                }
+                $delete->execute([$values[0], $values[1]]);
+                $insert->execute($values);
+            }
+            $this->pdo->commit();
+        } catch (Throwable $exception) {
+            $this->pdo->rollBack();
+            throw $exception instanceof RuntimeException ? $exception : new RuntimeException('update_cycle_store_reinstate_failed');
+        }
     }
 
     /** Statements that create the table for this PDO's driver (sqlite or mysql); a site migration runs them. */

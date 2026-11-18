@@ -99,7 +99,9 @@
     "tests/Support/UpdateClientFakes.php",
     "tests/Unit/LaravelSeamAdaptersTest.php",
     "tests/Unit/LaravelUpdateCycleTest.php",
-    "tests/Unit/ReleaseSourceTest.php"
+    "tests/Unit/ReleaseSourceTest.php",
+    "src/Contracts/RestoreAwareExecutionStore.php",
+    "tests/Unit/InstalledSiteFindingsTest.php"
   ],
   "forbidden_files": [
     "resources/*",

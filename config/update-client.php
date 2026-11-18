@@ -23,7 +23,9 @@ return [
 
     /*
      * Public Ed25519 keys that may sign `release.json`: key id => base64 of the 32-byte public key. Public keys only;
-     * the private key never enters a repository. Empty means every release is refused.
+     * the private key never enters a repository. The keys the distribution ships come from the site's
+     * `config/larena-release-keys.php` (same format) and are added to these. No key at all means every release is
+     * refused.
      *
      * Example (not a real key):
      *     'trusted_keys' => [

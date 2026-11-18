@@ -36,9 +36,21 @@ final class UpdateStatusCommand extends UpdateCommand
                 $storeReason = self::reason($exception);
             }
 
+            try {
+                $installed = $client->installedVersion();
+                $versionReason = null;
+            } catch (Throwable $exception) {
+                // A release without a known version (installed by an installer that wrote no `.larena-release`) is
+                // still shown; updates are refused until it has one.
+                $installed = null;
+                $versionReason = self::reason($exception);
+            }
+
             return array_filter([
                 'status' => 'ok',
-                'installed' => $client->installedVersion(),
+                'installed' => $installed,
+                'version_reason' => $versionReason,
+                'current_release' => $client->installedRelease(),
                 'channel' => $client->channel(),
                 'releases' => $releases,
                 'maintenance' => is_file($site . '/storage/framework/down'),
@@ -50,7 +62,7 @@ final class UpdateStatusCommand extends UpdateCommand
             ], static fn (mixed $value): bool => $value !== null);
         }, static function (array $payload): array {
             $lines = [
-                'Installed release: ' . $payload['installed'] . ' (channel ' . $payload['channel'] . ').',
+                'Installed release: ' . ($payload['installed'] ?? 'unknown version, ' . ($payload['version_reason'] ?? '') . ', in releases/' . $payload['current_release']) . ' (channel ' . $payload['channel'] . ').',
                 'Releases on disk: ' . implode(', ', (array) $payload['releases']) . '.',
                 'Maintenance mode: ' . ($payload['maintenance'] === true ? 'on' : 'off') . '.',
                 'Update sources: ' . ((array) $payload['sources'] === [] ? 'none configured' : implode(', ', (array) $payload['sources'])) . '.',

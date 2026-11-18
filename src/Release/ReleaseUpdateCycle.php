@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Larena\UpdateClient\Release;
 
 use InvalidArgumentException;
+use Larena\UpdateClient\Contracts\RestoreAwareExecutionStore;
 use Larena\UpdateClient\Contracts\RollbackBoundary;
 use Larena\UpdateClient\Contracts\UpdateExecutionStore;
 use Larena\UpdateClient\Contracts\UpdateLifecycleAudit;
@@ -135,7 +136,7 @@ final readonly class ReleaseUpdateCycle
                 $this->maintenance->enter($this->releaseDirectory($release->to));
                 if ($restoreDatabase) {
                     $stage = 'restore';
-                    $this->restore->restoreDatabase($this->site, $backupRef);
+                    $this->restoreDatabase($backupRef);
                 }
                 $stage = 'switch';
                 $this->activate($this->pointer->switchTo($release->from));
@@ -175,15 +176,16 @@ final readonly class ReleaseUpdateCycle
         // 1. Preflight: read-only.
         try {
             $from = $this->pointer->current() ?? throw new RuntimeException('release_current_missing');
+            $fromVersion = $this->pointer->currentVersion() ?? throw new RuntimeException('release_current_missing');
             $this->preflight->check($this->site, is_file($archivePath) && !is_link($archivePath) ? (int) filesize($archivePath) : 0);
         } catch (Throwable $exception) {
             return $this->block($cycle, $this->reason($exception, 'update_preflight_failed'));
         }
         $cycle = $this->advance($cycle, UpdateCycleState::Planned, release: new ReleaseTransition($from));
 
-        // 2. Signature and archive: the installed release id is the installed version. Nothing is written yet.
+        // 2. Signature and archive, against the version the current release runs. Nothing is written yet.
         try {
-            $release = $this->verifier->verify($releaseBytes, $signatureBytes, $from, $channel);
+            $release = $this->verifier->verify($releaseBytes, $signatureBytes, $fromVersion, $channel);
             ReleaseSignatureVerifier::verifyArchive($release, $archivePath);
             $to = ReleaseDirectory::id($release->version);
         } catch (Throwable $exception) {
@@ -277,7 +279,7 @@ final readonly class ReleaseUpdateCycle
             }
             if ($migrationsStarted) {
                 $stage = 'restore';
-                $this->restore->restoreDatabase($this->site, (string) $cycle->rollbackBoundary?->snapshotRef);
+                $this->restoreDatabase((string) $cycle->rollbackBoundary?->snapshotRef);
             }
             if ($maintenance) {
                 $stage = 'resume';
@@ -332,6 +334,17 @@ final readonly class ReleaseUpdateCycle
         }
 
         return $blocked;
+    }
+
+    /** The database from the cycle's copy; the cycle history in a {@see RestoreAwareExecutionStore} survives it. */
+    private function restoreDatabase(string $backupRef): void
+    {
+        $store = $this->store instanceof RestoreAwareExecutionStore ? $this->store : null;
+        $history = $store?->history();
+        $this->restore->restoreDatabase($this->site, $backupRef);
+        if ($store !== null && $history !== null) {
+            $store->reinstate($history);
+        }
     }
 
     private function activate(ReleaseSwitch $switch): void

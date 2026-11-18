@@ -37,8 +37,17 @@ commands:
 - `larena:update:status` — installed release, releases on disk, recent cycles.
 
 Every command prints readable lines or `--json`. The site must use the release
-layout (`<site>/releases/<release>`, `<site>/current`). No release key ships
-with the package: list the public keys in `update-client.trusted_keys`.
-Nothing is installed without an operator running `larena:update:apply`.
+layout (`<site>/releases/<release>`, `<site>/current`). The version a release
+runs is the `version` in its `.larena-release` marker (written when a release
+is unpacked; the installer must write it for the release it installs), or its
+folder name when that is a version. No release key ships with the package: the
+distribution lists its public keys in the site's `config/larena-release-keys.php`
+(`key id => base64 public key`); `update-client.trusted_keys` may add more.
+Sources (`LARENA_UPDATE_SOURCES`, in order) are HTTPS release pages or local
+folders `file:///path` with the layout the release step writes
+(`download/v<version>/release.json`, `release.json.sig`, the archive).
+A database restore during a rollback keeps the update history: the cycles are
+carried over the restore. Nothing is installed without an operator running
+`larena:update:apply`.
 
 Canonical specifications are in `simai/larena-specs`.
