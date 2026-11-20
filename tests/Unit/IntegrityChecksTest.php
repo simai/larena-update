@@ -125,6 +125,8 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         mkdir($site->release . '/bootstrap/cache');
         file_put_contents($site->release . '/bootstrap/cache/packages.php', "<?php return [];\n");
         file_put_contents($site->storage . '/framework/views/' . sha1('other') . '.php', "<?php echo 2;\n");
+        // Laravel names compiled views with xxh128: 32 hex characters.
+        file_put_contents($site->storage . '/framework/views/' . hash('xxh128', 'other') . '.php', "<?php echo 3;\n");
 
         $quick = $site->guard->check();
         Kit::check($quick->status === CoreCheck::CHANGED && isset($quick->problems['public/index.php'], $quick->problems['public/.htaccess'])

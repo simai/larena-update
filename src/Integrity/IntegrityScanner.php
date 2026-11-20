@@ -39,7 +39,7 @@ final readonly class IntegrityScanner
     /** A run nobody advanced for this long is started again rather than continued. */
     private const STALE_SECONDS = 86400;
     private const PHP = '/\.(php[0-9]?|phtml|phar|pht|phps)(\.|\z)/i';
-    private const BLADE = '/\A[a-f0-9]{40,64}\.php\z/D';
+    private const BLADE = '/\A[a-f0-9]{32,64}\.php\z/D';
     private const GENERATED = [
         'bootstrap/cache/config.php', 'bootstrap/cache/events.php', 'bootstrap/cache/packages.php',
         'bootstrap/cache/routes-v7.php', 'bootstrap/cache/services.php',
