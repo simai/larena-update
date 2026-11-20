@@ -109,6 +109,13 @@ use Symfony\Component\HttpFoundation\Response;
             $alerts = (new IntegrityAdminAlertSource($bareIntegrity, $translator, static fn (): bool => true, $routes))->alerts(Request::create('/admin'));
             Kit::check(count($alerts) === 1 && $alerts[0]->id === 'update-client:integrity:no-list' && $alerts[0]->level->value === 'warning'
                 && str_contains($alerts[0]->text, 'списка файлов нет'), 'no list is said in the bar');
+            // A developer checkout: information, hidden once and for good, not a warning that hangs forever.
+            mkdir($bare->release . '/.git');
+            $sourceIntegrity = new SiteIntegrity($bare->layout, ['release.test' => $bare->publicKey], [], new RecordingIntegrityHistory());
+            $alerts = (new IntegrityAdminAlertSource($sourceIntegrity, $translator, static fn (): bool => true, $routes))->alerts(Request::create('/admin'));
+            Kit::check(count($alerts) === 1 && $alerts[0]->id === 'update-client:integrity:source' && $alerts[0]->level->value === 'info'
+                && $alerts[0]->level->hideable() && $alerts[0]->level->hiddenFor() === null
+                && $alerts[0]->text === 'Сайт установлен из исходного кода — проверка файлов не ведётся.', 'a checkout is said as information');
         } finally {
             $bare->cleanup();
         }

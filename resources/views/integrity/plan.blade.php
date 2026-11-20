@@ -7,7 +7,7 @@
     @php($C = \Larena\Admin\Runtime\AdminControls::class)
     <section class="larena-panel larena-panel-padded" data-integrity-plan aria-live="polite">
         @foreach ($blockers as $blocker)
-            {!! $C::alert(\Illuminate\Support\Str::ucfirst($blocker), 'danger') !!}
+            {!! $C::alert(\Illuminate\Support\Str::ucfirst($blocker['text']), $blocker['level']) !!}
         @endforeach
         @if ($planned !== null)
             {{ $planned }}

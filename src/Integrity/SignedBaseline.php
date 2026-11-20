@@ -37,6 +37,9 @@ final readonly class SignedBaseline
     {
         $directory = $layout->signedDirectory();
         $fingerprint = self::fingerprint($layout);
+        if ($layout->sourceCheckout()) {
+            throw new IntegrityUnavailable('integrity_source_checkout');
+        }
         $bytes = [];
         foreach (self::FILES as $name) {
             $path = $directory . '/' . $name;
@@ -71,7 +74,8 @@ final readonly class SignedBaseline
             $parts[] = IntegrityLayout::stat($layout->signedDirectory() . '/' . $name) ?? '-';
         }
 
-        return implode('|', $parts);
+        // A site from source has no signed files at all; its marker changes the value when that comes or goes.
+        return implode('|', $parts) . ($parts === ['-', '-', '-'] && $layout->sourceCheckout() ? '|source' : '');
     }
 
     private static function code(Throwable $failure): string

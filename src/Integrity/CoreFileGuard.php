@@ -67,7 +67,11 @@ final readonly class CoreFileGuard
                     $kept['core'][$path] = ['sha256' => $entry['sha256'], 'bytes' => $entry['bytes'], 'stat' => null, 'problem' => null];
                 }
             } catch (IntegrityUnavailable $unavailable) {
-                $kept['status'] = $unavailable->reason === 'integrity_list_missing' ? CoreCheck::NO_LIST : CoreCheck::UNKNOWN;
+                $kept['status'] = match ($unavailable->reason) {
+                    'integrity_list_missing' => CoreCheck::NO_LIST,
+                    'integrity_source_checkout' => CoreCheck::SOURCE,
+                    default => CoreCheck::UNKNOWN,
+                };
                 $kept['reason'] = $unavailable->reason;
             }
         }
@@ -144,7 +148,7 @@ final readonly class CoreFileGuard
 
         return match ($status) {
             CoreCheck::OK => new CoreCheck(CoreCheck::OK, [], null, false, count($paths)),
-            CoreCheck::NO_LIST, CoreCheck::UNKNOWN => $reason === '-' ? null : new CoreCheck($status, [], $reason),
+            CoreCheck::NO_LIST, CoreCheck::SOURCE, CoreCheck::UNKNOWN => $reason === '-' ? null : new CoreCheck($status, [], $reason),
             default => null,
         };
     }

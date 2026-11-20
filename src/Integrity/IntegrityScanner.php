@@ -30,6 +30,8 @@ final readonly class IntegrityScanner
     public const UNCHANGED = 'unchanged';
     public const CHANGES_FOUND = 'changes_found';
     public const UNKNOWN = 'unknown';
+    /** A site run from source: there is no signed list to check against (IntegrityLayout::sourceCheckout()). */
+    public const SOURCE = 'source';
 
     private const STATE = 'scan.json';
     private const STATS = 'stats.json';
@@ -174,7 +176,7 @@ final readonly class IntegrityScanner
         try {
             $baseline = ($this->baseline)();
         } catch (IntegrityUnavailable $unavailable) {
-            return $this->finish($run, self::UNKNOWN, $unavailable->reason);
+            return $this->finish($run, $unavailable->reason === 'integrity_source_checkout' ? self::SOURCE : self::UNKNOWN, $unavailable->reason);
         } catch (Throwable) {
             return $this->finish($run, self::UNKNOWN, 'integrity_check_failed');
         }

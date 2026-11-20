@@ -145,7 +145,7 @@ final readonly class IntegrityAdminController
             'heading' => $this->text('restore.heading'),
             'planned' => $planned,
             'empty' => $plan->empty(),
-            'blockers' => array_map(fn (string $code): string => $this->reason($code), $plan->blockers),
+            'blockers' => array_map(fn (string $code): array => ['text' => $this->reason($code), 'level' => self::blockerLevel($code)], $plan->blockers),
             'back' => route('larena.update-client.integrity.index', [], false),
         ]);
     }
@@ -196,6 +196,20 @@ final readonly class IntegrityAdminController
             'blockers' => [],
             'back' => route('larena.update-client.integrity.index', [], false),
         ]);
+    }
+
+    /**
+     * One state, one level on every page: «nothing to compare with» (no list, no key, a list that does not hold) is
+     * the warning the check page shows, a site from source the information it shows; what breaks the return itself
+     * (a damaged archive, a plan that moved) is an error.
+     */
+    public static function blockerLevel(string $code): string
+    {
+        return match ($code) {
+            'integrity_source_checkout' => 'info',
+            'integrity_list_missing', 'integrity_keys_missing', 'integrity_list_untrusted' => 'warning',
+            default => 'danger',
+        };
     }
 
     public function returnRun(Request $request, string $id): RedirectResponse

@@ -58,8 +58,37 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         Kit::check($run['result'] === IntegrityScanner::UNKNOWN && $run['reason'] === 'integrity_list_missing', 'the full check says it could not check');
         $plan = $bare->restore->plan();
         Kit::check($plan->blockers === ['integrity_list_missing'], 'nothing can be restored without a list');
+        Kit::check(\Larena\UpdateClient\Laravel\Integrity\IntegrityAdminController::blockerLevel('integrity_list_missing') === 'warning'
+            && \Larena\UpdateClient\Laravel\Integrity\IntegrityAdminController::blockerLevel('integrity_archive_damaged') === 'danger',
+            'no list is one warning on the check page and on the plan');
+        Kit::check(!$bare->layout->sourceCheckout(), 'a release-layout install without a list is no source checkout: it stays a warning');
+
+        // --- A developer checkout: the same site turned into a git checkout is «из исходного кода», information.
+        mkdir($bare->release . '/.git');
+        Kit::check($bare->layout->sourceCheckout(), 'a git checkout without a signed folder is from source');
+        $check = $bare->guard->check();
+        Kit::check($check->status === CoreCheck::SOURCE && $check->reason === 'integrity_source_checkout' && !$check->ok(),
+            'the kept «no list» answer gives way to «from source»: ' . $check->status);
+        Kit::check($bare->guard->check()->status === CoreCheck::SOURCE, 'and stays');
+        $run = $bare->scan();
+        Kit::check($run['result'] === IntegrityScanner::SOURCE && $run['reason'] === 'integrity_source_checkout', 'the full check says it is not kept');
+        Kit::check($bare->restore->plan()->blockers === ['integrity_source_checkout']
+            && \Larena\UpdateClient\Laravel\Integrity\IntegrityAdminController::blockerLevel('integrity_source_checkout') === 'info', 'the plan says it as information');
+        // A signed folder present (even a broken one) is a release, never «from source».
+        mkdir($bare->release . '/.larena-signed');
+        Kit::check(!$bare->layout->sourceCheckout() && $bare->guard->check()->status === CoreCheck::NO_LIST, 'a signed folder without its files is no list');
+        rmdir($bare->release . '/.larena-signed');
+        rmdir($bare->release . '/.git');
     } finally {
         $bare->cleanup();
+    }
+    // A base path outside a release layout (`<site>/releases/<release>`) and without git is from source too.
+    $plain = Kit::temp('plain-checkout');
+    try {
+        $layout = new \Larena\UpdateClient\Integrity\IntegrityLayout($plain, $plain . '/storage/app/larena/integrity');
+        Kit::check($layout->sourceCheckout(), 'no release layout is from source');
+    } finally {
+        Kit::remove($plain);
     }
 
     // --- A3 and A4 on one site: the four negative checks, the findings, the restore and the quarantine.

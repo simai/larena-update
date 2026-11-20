@@ -10,6 +10,7 @@ return [
     'archive_none' => 'no archive',
 
     'alerts' => [
+        'source_checkout' => 'The site is installed from source code — its files are not checked.',
         'source' => 'Site files',
         'core' => 'Main site files are changed: :count. The site works. Put them back as they were.',
         'findings' => 'The check found changes in the site files: :count.',
@@ -19,6 +20,7 @@ return [
     ],
 
     'core' => [
+        'source' => 'The site is installed from source code — its files are not checked',
         'heading' => 'Main files',
         'ok' => 'Main files are fine',
         'changed' => 'Main files are changed',
@@ -50,6 +52,7 @@ return [
     ],
 
     'results' => [
+        'source' => 'Not kept: the site runs from source',
         'unchanged' => 'No changes',
         'changes_found' => 'Changes found',
         'unknown' => 'Could not check',
@@ -162,6 +165,7 @@ return [
     ],
 
     'reasons' => [
+        'integrity_source_checkout' => 'the site runs from its source code (a developer checkout), not from a release: it has no signed list, so its files are not compared.',
         'integrity_list_missing' => 'the site was installed without a signed release, so there is nothing to compare the files with.',
         'integrity_list_untrusted' => 'the file list did not pass the signature check.',
         'integrity_keys_missing' => 'the site has no release key to check a signature with.',

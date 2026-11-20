@@ -58,6 +58,24 @@ final readonly class IntegrityLayout
         ];
     }
 
+    /**
+     * A site run from its source code (a developer checkout, larena.test), not from a release: no signed folder
+     * `.larena-signed/` (not even a broken link to one), and the base path is a git checkout (`.git`, a folder or a
+     * worktree's file) or does not lie in a release layout (`<site>/releases/<release>`). Such a site has no signed
+     * list by its nature, so its files are not checked: that is information, not a warning. A release-layout install
+     * without a list stays the warning «списка файлов нет».
+     */
+    public function sourceCheckout(): bool
+    {
+        $signed = $this->signedDirectory();
+        if (file_exists($signed) || is_link($signed)) {
+            return false;
+        }
+        $root = rtrim($this->releaseRoot, '/');
+
+        return file_exists($root . '/.git') || basename(dirname($root)) !== 'releases';
+    }
+
     public function signedDirectory(): string
     {
         return rtrim($this->releaseRoot, '/') . '/' . ReleaseArchiveExtractor::SIGNED;

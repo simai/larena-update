@@ -21,6 +21,8 @@
                         <li><code>{{ $path }}</code> — {{ __('larena-update-client::integrity.problems.' . $problem) }}</li>
                     @endforeach
                 </ul>
+            @elseif ($check->status === 'source')
+                {!! $C::alert(\Illuminate\Support\Str::ucfirst((string) $checkWords['reason']), 'info', $checkWords['status']) !!}
             @elseif ($check->status === 'ok')
                 {!! $C::alert(__('larena-update-client::integrity.core.ok_text', ['count' => $check->files]), 'success', $checkWords['status']) !!}
             @else

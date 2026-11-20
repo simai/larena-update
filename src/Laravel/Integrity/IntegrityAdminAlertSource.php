@@ -21,7 +21,9 @@ use Larena\UpdateClient\Integrity\IntegrityScanner;
  * - danger `update-client:integrity:core` — main files of the site are changed (A2), with «Вернуть как было»;
  * - danger `update-client:integrity:findings` — the last full check found changes (A3);
  * - warning `update-client:integrity:no-list` — «списка файлов нет»: nothing to compare with, never «всё в порядке»;
- * - warning `update-client:integrity:unknown` — the check could not run, with the reason in words.
+ * - warning `update-client:integrity:unknown` — the check could not run, with the reason in words;
+ * - info `update-client:integrity:source` — «Сайт установлен из исходного кода — проверка файлов не ведётся» (a
+ *   developer checkout): hidden once, it stays hidden.
  *
  * Only a person who may see the update centre (`update.safety.read`) sees them.
  */
@@ -58,12 +60,15 @@ final readonly class IntegrityAdminAlertSource implements AdminAlertSource
         } elseif ($check->status === CoreCheck::NO_LIST) {
             $alerts[] = new AdminAlert('update-client:integrity:no-list', AdminAlertLevel::Warning, $text('alerts.no_list'), $source, null,
                 new AdminAlertAction($text('alerts.open'), $page));
+        } elseif ($check->status === CoreCheck::SOURCE) {
+            $alerts[] = new AdminAlert('update-client:integrity:source', AdminAlertLevel::Info, $text('alerts.source_checkout'), $source, null,
+                new AdminAlertAction($text('alerts.open'), $page));
         } elseif ($check->status === CoreCheck::UNKNOWN) {
             $alerts[] = new AdminAlert('update-client:integrity:unknown', AdminAlertLevel::Warning,
                 $text('alerts.unknown', ['reason' => $this->reason((string) $check->reason)]), $source, null,
                 new AdminAlertAction($text('alerts.open'), $page));
         }
-        if ($check->status !== CoreCheck::NO_LIST) {
+        if ($check->status !== CoreCheck::NO_LIST && $check->status !== CoreCheck::SOURCE) {
             $open = count($this->integrity->findings()->open());
             if ($open > 0) {
                 $alerts[] = new AdminAlert('update-client:integrity:findings', AdminAlertLevel::Danger,
