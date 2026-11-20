@@ -7,6 +7,9 @@ namespace Larena\UpdateClient\Release;
 /**
  * A release description whose signature was checked by a trusted key and whose content passed every rule of
  * {@see ReleaseSignatureVerifier}. Nothing is downloaded or written before a release is verified.
+ *
+ * `files` names the signed file list of the release ({@see FileList}); null for a release built before file lists,
+ * which callers report as "no file list", never as a passed check.
  */
 final readonly class VerifiedRelease
 {
@@ -28,6 +31,7 @@ final readonly class VerifiedRelease
         public array $notes,
         public string $keyId,
         public string $releaseSha256,
+        public ?FileListReference $files = null,
     ) {
     }
 }

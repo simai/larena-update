@@ -101,7 +101,10 @@
     "tests/Unit/LaravelUpdateCycleTest.php",
     "tests/Unit/ReleaseSourceTest.php",
     "src/Contracts/RestoreAwareExecutionStore.php",
-    "tests/Unit/InstalledSiteFindingsTest.php"
+    "tests/Unit/InstalledSiteFindingsTest.php",
+    "src/Release/FileList.php",
+    "src/Release/FileListReference.php",
+    "tests/Unit/FileListTest.php"
   ],
   "forbidden_files": [
     "resources/*",

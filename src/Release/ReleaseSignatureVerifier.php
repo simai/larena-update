@@ -13,6 +13,8 @@ use RuntimeException;
  *
  * The signature file is JSON `{"key_id": "...", "signature": "<base64 of 64 bytes>"}` over the exact bytes of
  * `release.json`. Only keys given to the constructor are trusted; a revoked key id is refused even if trusted.
+ * The optional `files` object (`{"file": "files.json", "sha256", "bytes"}`) binds the release's file list
+ * ({@see FileList}) to this signature; it is an optional field of schema version 1, so older releases still verify.
  * Every failure is a RuntimeException with a stable reason code and no secret in it.
  */
 final readonly class ReleaseSignatureVerifier
@@ -99,6 +101,19 @@ final readonly class ReleaseSignatureVerifier
             || !is_int($archive['bytes'] ?? null) || $archive['bytes'] < 1) {
             throw new RuntimeException('release_archive_invalid');
         }
+        // Optional since file lists came in: an older release has no `files` and verifies with files null.
+        $files = null;
+        if (array_key_exists('files', $release)) {
+            $list = $release['files'];
+            if (!is_array($list)
+                || !is_string($list['file'] ?? null) || preg_match('/\A[a-z0-9][a-z0-9._-]{0,127}\.json\z/D', $list['file']) !== 1
+                || $list['file'] === 'release.json'
+                || !is_string($list['sha256'] ?? null) || preg_match('/\A[a-f0-9]{64}\z/D', $list['sha256']) !== 1
+                || !is_int($list['bytes'] ?? null) || $list['bytes'] < 2 || $list['bytes'] > FileList::MAX_BYTES) {
+                throw new RuntimeException('release_files_reference_invalid');
+            }
+            $files = new FileListReference($list['file'], $list['sha256'], $list['bytes']);
+        }
         $packages = $release['packages'] ?? null;
         if (!is_array($packages) || $packages === [] || array_is_list($packages)) {
             throw new RuntimeException('release_packages_invalid');
@@ -136,6 +151,7 @@ final readonly class ReleaseSignatureVerifier
             notes: $notes,
             keyId: $keyId,
             releaseSha256: hash('sha256', $releaseBytes),
+            files: $files,
         );
     }
 

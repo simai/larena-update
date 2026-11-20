@@ -45,7 +45,15 @@ distribution lists its public keys in the site's `config/larena-release-keys.php
 (`key id => base64 public key`); `update-client.trusted_keys` may add more.
 Sources (`LARENA_UPDATE_SOURCES`, in order) are HTTPS release pages or local
 folders `file:///path` with the layout the release step writes
-(`download/v<version>/release.json`, `release.json.sig`, the archive).
+(`download/v<version>/release.json`, `release.json.sig`, `files.json`, the archive).
+`files.json` (schema `larena.release-files`) lists every path of the release
+with its type, size and sha256, plus `core_files` (entry point, loader, config,
+`.htaccess`); `release.json` names its size and sha256, so the one signature
+covers it. Before unpacking, the archive must match the list exactly, and every
+unpacked file must match its sha256. The checked list and the signed
+description stay in `<site>/releases/<release>/.larena-signed/` for the
+integrity checks. A release built before file lists has no `files` and is
+reported as having no list. The same `FileList` format describes one package.
 A database restore during a rollback keeps the update history: the cycles are
 carried over the restore. Nothing is installed without an operator running
 `larena:update:apply`.

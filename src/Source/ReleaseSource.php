@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Larena\UpdateClient\Source;
 
+use Larena\UpdateClient\Release\FileList;
 use Larena\UpdateClient\Release\ReleaseDirectory;
 use Larena\UpdateClient\Release\ReleaseSignatureVerifier;
 use Larena\UpdateClient\Release\VerifiedRelease;
@@ -27,7 +28,9 @@ use Throwable;
  * Order of trust: the description and its signature are read into memory and checked by
  * {@see ReleaseSignatureVerifier} first; only then is anything written to the download folder
  * (`storage/app/larena/update/downloads/<version>`), the archive is fetched with the exact size the signed
- * description gives as its limit, and its size and sha256 are checked before it is handed to the cycle. A source
+ * description gives as its limit, and its size and sha256 are checked before it is handed to the cycle. A release
+ * that names a file list (`files.json`, {@see FileList}) has it fetched first, up to its signed size, and checked
+ * against `release.json` and in itself; it lies next to the archive, where the cycle reads it. A source
  * that fails (network, status, signature, content) is skipped for the next one; the reasons stay in
  * {@see errors()}. Every failure is a RuntimeException with a stable reason code.
  */
@@ -150,7 +153,17 @@ final class ReleaseSource
         // Verified: from here on files are written, and only into this version's own download folder.
         $directory = $this->directory($version);
         $archive = $directory . '/' . $release->archiveFile;
-        foreach (['release.json' => $bytes, 'release.json.sig' => $signature] as $name => $content) {
+        $written = ['release.json' => $bytes, 'release.json.sig' => $signature];
+        if ($release->files !== null) {
+            // The signed file list: fetched up to its signed size, checked against release.json and in itself
+            // before the archive is requested. An older release without `files` has no list (files null).
+            $list = $folder !== null
+                ? self::readFile($base . $release->files->file, $release->files->bytes)
+                : $this->fetch($base . rawurlencode($release->files->file), $release->files->bytes);
+            FileList::forRelease($release, $list);
+            $written[$release->files->file] = $list;
+        }
+        foreach ($written as $name => $content) {
             if (is_link($directory . '/' . $name) || file_put_contents($directory . '/' . $name, $content) !== strlen($content)) {
                 throw new RuntimeException('update_download_path_invalid');
             }
@@ -179,6 +192,19 @@ final class ReleaseSource
         }
 
         return new DownloadedRelease($source, $release, $bytes, $signature, $archive);
+    }
+
+    private function fetch(string $url, int $limit): string
+    {
+        $response = $this->http->send(new UpdateHttpRequest(
+            'GET', $url, timeoutSeconds: min(120, $this->timeoutSeconds), maxBytes: $limit,
+            followRedirects: true, connectTimeoutSeconds: $this->connectTimeoutSeconds,
+        ));
+        if (!$response->successful()) {
+            throw new RuntimeException($response->status === 404 ? 'release_files_missing' : 'update_download_failed');
+        }
+
+        return $response->body;
     }
 
     /** @return array{0:string,1:string} release.json bytes, release.json.sig bytes */

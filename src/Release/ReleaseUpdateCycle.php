@@ -187,6 +187,11 @@ final readonly class ReleaseUpdateCycle
         try {
             $release = $this->verifier->verify($releaseBytes, $signatureBytes, $fromVersion, $channel);
             ReleaseSignatureVerifier::verifyArchive($release, $archivePath);
+            // The signed file list, when the release has one: checked against release.json and the archive here.
+            $files = FileList::beside($release, $archivePath);
+            if ($files !== null) {
+                $this->extractor->checkList($files, $archivePath);
+            }
             $to = ReleaseDirectory::id($release->version);
         } catch (Throwable $exception) {
             return $this->block($cycle, $this->reason($exception, 'update_release_invalid'));
@@ -218,7 +223,7 @@ final readonly class ReleaseUpdateCycle
             try {
                 switch ($step) {
                     case 'extract':
-                        $this->extractor->extract($release, $archivePath, $this->site, $to);
+                        $this->extractor->extract($release, $archivePath, $this->site, $to, $releaseBytes, $signatureBytes);
                         ReleaseSharedLinks::link($this->site, $to);
                         break;
                     case 'maintenance':
