@@ -70,7 +70,7 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
             && $bare->restore->plan()->blockers === ['integrity_list_missing'], 'a .git folder does not make a site «from source»');
         rmdir($bare->release . '/.git');
 
-        // --- A developer checkout is marked explicitly (LARENA_SOURCE_INSTALL=1 or APP_ENV=local): information.
+        // --- A developer checkout is marked explicitly (LARENA_SOURCE_INSTALL=1): information.
         $bare->sourceInstall = true;
         $bare->wire();
         Kit::check($bare->layout->sourceCheckout(), 'the explicit sign without a signed folder is from source');
@@ -90,13 +90,12 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         $bare->cleanup();
     }
 
-    // The explicit sign: LARENA_SOURCE_INSTALL true, or APP_ENV=local; nothing else.
-    Kit::check(IntegrityLayout::sourceInstallMarked('1', 'production') && IntegrityLayout::sourceInstallMarked(true, 'production')
-        && IntegrityLayout::sourceInstallMarked('true', null) && IntegrityLayout::sourceInstallMarked(null, 'local')
-        && IntegrityLayout::sourceInstallMarked(false, 'local'), 'LARENA_SOURCE_INSTALL=1 or APP_ENV=local marks a source install');
-    Kit::check(!IntegrityLayout::sourceInstallMarked(null, 'production') && !IntegrityLayout::sourceInstallMarked('0', 'production')
-        && !IntegrityLayout::sourceInstallMarked('', 'staging') && !IntegrityLayout::sourceInstallMarked(false, 'testing')
-        && !IntegrityLayout::sourceInstallMarked('no', null), 'without the sign a site is never from source');
+    // The explicit sign: LARENA_SOURCE_INSTALL true; nothing else (APP_ENV=local is written by every installer today).
+    Kit::check(IntegrityLayout::sourceInstallMarked('1') && IntegrityLayout::sourceInstallMarked(true)
+        && IntegrityLayout::sourceInstallMarked('true') && IntegrityLayout::sourceInstallMarked(1), 'LARENA_SOURCE_INSTALL=1 marks a source install');
+    Kit::check(!IntegrityLayout::sourceInstallMarked(null) && !IntegrityLayout::sourceInstallMarked('0')
+        && !IntegrityLayout::sourceInstallMarked('') && !IntegrityLayout::sourceInstallMarked(false)
+        && !IntegrityLayout::sourceInstallMarked('no') && !IntegrityLayout::sourceInstallMarked('local'), 'without the sign a site is never from source');
 
     // A base path outside a release layout (`<site>/releases/<release>`) and without the sign is not from source.
     $plain = Kit::temp('plain-checkout');

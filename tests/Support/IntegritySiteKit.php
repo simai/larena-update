@@ -48,7 +48,7 @@ final class IntegritySiteKit
     public IntegrityRestore $restore;
     /** @var array{0:string,1:string,2:string,3:string} release.json, sig, files.json, archive */
     public array $signed;
-    /** The explicit «run from source» sign (LARENA_SOURCE_INSTALL=1 or APP_ENV=local); call wire() after a change. */
+    /** The explicit «run from source» sign (LARENA_SOURCE_INSTALL=1); call wire() after a change. */
     public bool $sourceInstall = false;
 
     public static function make(string $name = 'integrity', bool $withList = true): self

@@ -55,7 +55,8 @@ description stay in `<site>/releases/<release>/.larena-signed/` for the
 integrity checks. A release built before file lists has no `files` and is
 reported as having no list. The same `FileList` format describes one package.
 A site run from its source code (a developer checkout) is marked explicitly:
-`LARENA_SOURCE_INSTALL=1` in its `.env`, or `APP_ENV=local`. Only then, and
+`LARENA_SOURCE_INSTALL=1` in its `.env`. `APP_ENV=local` is no sign (every
+installer writes it today). Only then, and
 only while it has no `.larena-signed/` folder, the checks answer
 «Сайт установлен из исходного кода — проверка файлов не ведётся», an information
 that a person hides once, not a warning. Neither a `.git` folder nor the folder

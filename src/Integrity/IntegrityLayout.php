@@ -17,8 +17,8 @@ use RuntimeException;
  * - `stateDirectory`: the checks' own files (`storage/app/larena/integrity`): the per-request cache, the scan's
  *   cursor, the findings and the quarantine. It lies in the shared storage, outside the web root and outside every
  *   release, so it survives a release switch; it is never scanned itself.
- * - `sourceInstall`: the site was marked as run from its source code (env `LARENA_SOURCE_INSTALL=1`, or
- *   `APP_ENV=local`; {@see self::sourceInstallMarked()}). Only this explicit sign turns the checks into «from source»;
+ * - `sourceInstall`: the site was marked as run from its source code (env `LARENA_SOURCE_INSTALL=1`;
+ *   {@see self::sourceInstallMarked()}; `APP_ENV=local` is no sign: every installer writes it today). Only this explicit sign turns the checks into «from source»;
  *   neither `.git` nor the folder layout does (any hosting: an archive unpacked into a plain folder is checked too).
  */
 final readonly class IntegrityLayout
@@ -80,15 +80,13 @@ final readonly class IntegrityLayout
     }
 
     /**
-     * The explicit sign of a site run from source: `LARENA_SOURCE_INSTALL` set to a true value (1, true, yes, on), or
-     * the application environment `local`. Nothing on disk is consulted.
+     * The explicit sign of a site run from source: `LARENA_SOURCE_INSTALL` set to a true value (1, true, yes, on).
+     * Nothing on disk is consulted, nor the application environment: every installer writes `APP_ENV=local` today.
      */
-    public static function sourceInstallMarked(mixed $flag, ?string $environment): bool
+    public static function sourceInstallMarked(mixed $flag): bool
     {
-        $marked = is_bool($flag) ? $flag
+        return is_bool($flag) ? $flag
             : (is_int($flag) ? $flag === 1 : (is_string($flag) && in_array(strtolower(trim($flag)), ['1', 'true', 'yes', 'on'], true)));
-
-        return $marked || $environment === 'local';
     }
 
     public function signedDirectory(): string
