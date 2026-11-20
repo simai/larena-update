@@ -24,7 +24,7 @@
             @elseif ($check->status === 'ok')
                 {!! $C::alert(__('larena-update-client::integrity.core.ok_text', ['count' => $check->files]), 'success', $checkWords['status']) !!}
             @else
-                {!! $C::alert($checkWords['reason'], 'warning', $checkWords['status']) !!}
+                {!! $C::alert(\Illuminate\Support\Str::ucfirst((string) $checkWords['reason']), 'warning', $checkWords['status']) !!}
             @endif
         </section>
 
