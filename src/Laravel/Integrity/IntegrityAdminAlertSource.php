@@ -25,7 +25,7 @@ use Larena\UpdateClient\Integrity\IntegrityScanner;
  * - info `update-client:integrity:source` — «Сайт установлен из исходного кода — проверка файлов не ведётся» (a
  *   developer checkout): hidden once, it stays hidden.
  *
- * Only a person who may see the update centre (`update.safety.read`) sees them.
+ * Only a person who may see the integrity page (`update.integrity.read`) sees them.
  */
 final readonly class IntegrityAdminAlertSource implements AdminAlertSource
 {
@@ -43,7 +43,7 @@ final readonly class IntegrityAdminAlertSource implements AdminAlertSource
 
     public function alerts(Request $request): array
     {
-        if (!($this->allows)($request, 'update.safety.read')) {
+        if (!($this->allows)($request, IntegrityAccessOperationRegistrar::READ)) {
             return [];
         }
         $text = fn (string $key, array $replace = []): string => (string) $this->translator->get('larena-update-client::integrity.' . $key, $replace);

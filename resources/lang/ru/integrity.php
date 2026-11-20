@@ -9,6 +9,12 @@ return [
     'archive_where' => 'Чистые файлы берутся из архива выпуска: :path',
     'archive_none' => 'архива нет',
 
+    // The page's rights (larena-update-client::integrity.operations.*).
+    'operations' => [
+        'read' => 'Смотреть проверку файлов',
+        'apply' => 'Возвращать файлы и снимать карантин',
+    ],
+
     'alerts' => [
         'source_checkout' => 'Сайт установлен из исходного кода — проверка файлов не ведётся.',
         'source' => 'Файлы сайта',

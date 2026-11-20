@@ -71,7 +71,7 @@ use Symfony\Component\HttpFoundation\Response;
         $routes = static fn (string $name, array $parameters = []): string => '/admin/integrity' . ($name === 'larena.update-client.integrity.restore' ? '/restore' : '');
         $allowed = true;
         $source = new IntegrityAdminAlertSource($integrity, $translator, static function (Request $request, string $operation) use (&$allowed): bool {
-            return $allowed && $operation === 'update.safety.read';
+            return $allowed && $operation === 'update.integrity.read';
         }, $routes);
 
         $request = Request::create('/admin');

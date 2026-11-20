@@ -9,6 +9,12 @@ return [
     'archive_where' => 'Clean files come from the release archive: :path',
     'archive_none' => 'no archive',
 
+    // The page's rights (larena-update-client::integrity.operations.*).
+    'operations' => [
+        'read' => 'View the file check',
+        'apply' => 'Put files back and release the quarantine',
+    ],
+
     'alerts' => [
         'source_checkout' => 'The site is installed from source code — its files are not checked.',
         'source' => 'Site files',

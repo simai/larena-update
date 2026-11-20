@@ -23,8 +23,8 @@ use Throwable;
 /**
  * «Целостность файлов» in the admin: what the checks see now, the findings with their pages, «Проверить сейчас», and
  * «Вернуть как было» and the return from the quarantine, both through plan → confirmation. Seeing needs
- * `update.safety.read`; acting needs `update.safety.apply` (the update centre's own rights: the same people who may
- * update the site may put its files back).
+ * `update.integrity.read`; acting needs `update.integrity.apply` (the update client's own rights,
+ * {@see IntegrityAccessOperationRegistrar}: the page works without larena/update).
  */
 final readonly class IntegrityAdminController
 {
@@ -58,7 +58,7 @@ final readonly class IntegrityAdminController
             'accepted' => array_values(array_filter($findings, static fn (array $f): bool => $f['state'] === FindingStore::EXCEPTION)),
             'resolved' => array_slice(array_values(array_filter($findings, static fn (array $f): bool => $f['state'] === FindingStore::RESOLVED)), 0, 20),
             'quarantine' => $this->integrity->restore()->quarantine(),
-            'canAct' => ($this->allows)($request, 'update.safety.apply'),
+            'canAct' => ($this->allows)($request, IntegrityAccessOperationRegistrar::APPLY),
             'notice' => $request->hasSession() ? $request->session()->get(self::NOTICE) : null,
             'archive' => $this->archiveWhere(),
             'label' => static fn (array $finding): string => IntegrityLayout::label((string) $finding['root'], (string) $finding['path']),
@@ -89,9 +89,9 @@ final readonly class IntegrityAdminController
             'explain' => $this->text('explain.' . $finding['kind']),
             'action' => $this->text(in_array($finding['kind'], Finding::RESTORED, true) ? 'restore.does_restore'
                 : (in_array($finding['kind'], Finding::QUARANTINED, true) ? 'restore.does_quarantine' : 'restore.does_nothing')),
-            'canRestore' => ($this->allows)($request, 'update.safety.apply') && $finding['state'] === FindingStore::OPEN
+            'canRestore' => ($this->allows)($request, IntegrityAccessOperationRegistrar::APPLY) && $finding['state'] === FindingStore::OPEN
                 && (in_array($finding['kind'], Finding::RESTORED, true) || in_array($finding['kind'], Finding::QUARANTINED, true)),
-            'canAccept' => ($this->allows)($request, 'update.safety.apply') && $finding['state'] === FindingStore::OPEN
+            'canAccept' => ($this->allows)($request, IntegrityAccessOperationRegistrar::APPLY) && $finding['state'] === FindingStore::OPEN
                 && !in_array($finding['kind'], ['archive_damaged', 'archive_missing'], true),
             'notice' => $request->hasSession() ? $request->session()->get(self::NOTICE) : null,
         ]);

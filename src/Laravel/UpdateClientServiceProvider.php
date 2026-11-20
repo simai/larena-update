@@ -21,6 +21,7 @@ use Larena\UpdateClient\Laravel\Console\UpdateRollbackCommand;
 use Larena\UpdateClient\Laravel\Console\UpdateStatusCommand;
 use Larena\UpdateClient\Laravel\Integrity\AuditIntegrityHistory;
 use Larena\UpdateClient\Laravel\Integrity\CheckCoreFiles;
+use Larena\UpdateClient\Laravel\Integrity\IntegrityAccessOperationRegistrar;
 use Larena\UpdateClient\Laravel\Integrity\IntegrityAdminController;
 use Larena\UpdateClient\Laravel\Integrity\IntegrityScanJobHandler;
 use Larena\UpdateClient\Laravel\Integrity\SiteIntegrity;
@@ -36,7 +37,8 @@ use Psr\Log\LoggerInterface;
  *
  * The site's own file checks (owner decision 2026-11-20, {@see SiteIntegrity}): the main files on every request
  * (global middleware), the full check through the scheduler and the queue in portions, the alert bar, the pages
- * `/admin/integrity` with «Вернуть как было», `larena:integrity:check|restore`, and core's installer seal.
+ * `/admin/integrity` with «Вернуть как было», `larena:integrity:check|restore`, and core's installer seal; the page's
+ * rights `update.integrity.read|apply` are the update client's own ({@see IntegrityAccessOperationRegistrar}).
  */
 final class UpdateClientServiceProvider extends ServiceProvider
 {
@@ -223,6 +225,10 @@ final class UpdateClientServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        // The integrity check's own rights, where larena/access is in the site (lead decision 2026-11-20).
+        if (class_exists(\Larena\Access\Runtime\AccessOperationRegistry::class) && $this->app->bound(\Larena\Access\Runtime\AccessOperationRegistry::class)) {
+            (new IntegrityAccessOperationRegistrar())->register($this->app->make(\Larena\Access\Runtime\AccessOperationRegistry::class));
+        }
         $this->bootIntegrity($this->app->make(ConfigRepository::class));
         $this->loadMigrationsFrom(__DIR__ . '/../../database/migrations');
         $this->loadRoutesFrom(__DIR__ . '/../../routes/update-client.php');
