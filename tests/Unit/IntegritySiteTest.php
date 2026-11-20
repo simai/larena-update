@@ -109,8 +109,15 @@ use Symfony\Component\HttpFoundation\Response;
             $alerts = (new IntegrityAdminAlertSource($bareIntegrity, $translator, static fn (): bool => true, $routes))->alerts(Request::create('/admin'));
             Kit::check(count($alerts) === 1 && $alerts[0]->id === 'update-client:integrity:no-list' && $alerts[0]->level->value === 'warning'
                 && str_contains($alerts[0]->text, 'списка файлов нет'), 'no list is said in the bar');
-            // A developer checkout: information, hidden once and for good, not a warning that hangs forever.
+            // An extra .git is no sign: the bar still says the list is missing.
             mkdir($bare->release . '/.git');
+            $gitIntegrity = new SiteIntegrity($bare->layout, ['release.test' => $bare->publicKey], [], new RecordingIntegrityHistory());
+            $alerts = (new IntegrityAdminAlertSource($gitIntegrity, $translator, static fn (): bool => true, $routes))->alerts(Request::create('/admin'));
+            Kit::check(count($alerts) === 1 && $alerts[0]->id === 'update-client:integrity:no-list', 'a .git folder does not hide the missing list');
+            // A developer checkout marked explicitly (LARENA_SOURCE_INSTALL=1 or APP_ENV=local): information, hidden
+            // once and for good, not a warning that hangs forever.
+            $bare->sourceInstall = true;
+            $bare->wire();
             $sourceIntegrity = new SiteIntegrity($bare->layout, ['release.test' => $bare->publicKey], [], new RecordingIntegrityHistory());
             $alerts = (new IntegrityAdminAlertSource($sourceIntegrity, $translator, static fn (): bool => true, $routes))->alerts(Request::create('/admin'));
             Kit::check(count($alerts) === 1 && $alerts[0]->id === 'update-client:integrity:source' && $alerts[0]->level->value === 'info'

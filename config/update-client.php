@@ -85,6 +85,9 @@ return [
         'portion_seconds' => 5,
         // The checks' own state, findings and quarantine; empty: `storage/app/larena/integrity` (outside the web root).
         'state_directory' => env('LARENA_INTEGRITY_STATE_DIRECTORY'),
+        // The site runs from its source code (a developer checkout): its files are not checked, said as information.
+        // Only this sign or APP_ENV=local turns that on; a site with a signed `.larena-signed/` folder is always checked.
+        'source_install' => env('LARENA_SOURCE_INSTALL', false),
         // The admin pages (`/admin/integrity`): the alert bar links here.
         'admin' => [
             'enabled' => true,

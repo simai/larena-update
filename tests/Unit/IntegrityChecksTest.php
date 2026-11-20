@@ -6,6 +6,7 @@ require_once __DIR__ . '/../Support/IntegritySiteKit.php';
 
 use Larena\UpdateClient\Integrity\CoreCheck;
 use Larena\UpdateClient\Integrity\FindingStore;
+use Larena\UpdateClient\Integrity\IntegrityLayout;
 use Larena\UpdateClient\Integrity\IntegrityRefused;
 use Larena\UpdateClient\Integrity\IntegrityScanner;
 use Larena\UpdateClient\Tests\Support\IntegritySiteKit as Site;
@@ -63,9 +64,16 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
             'no list is one warning on the check page and on the plan');
         Kit::check(!$bare->layout->sourceCheckout(), 'a release-layout install without a list is no source checkout: it stays a warning');
 
-        // --- A developer checkout: the same site turned into a git checkout is «из исходного кода», information.
+        // --- An extra `.git` turns nothing off: without the explicit sign it is still «no list», a warning.
         mkdir($bare->release . '/.git');
-        Kit::check($bare->layout->sourceCheckout(), 'a git checkout without a signed folder is from source');
+        Kit::check(!$bare->layout->sourceCheckout() && $bare->guard->check()->status === CoreCheck::NO_LIST
+            && $bare->restore->plan()->blockers === ['integrity_list_missing'], 'a .git folder does not make a site «from source»');
+        rmdir($bare->release . '/.git');
+
+        // --- A developer checkout is marked explicitly (LARENA_SOURCE_INSTALL=1 or APP_ENV=local): information.
+        $bare->sourceInstall = true;
+        $bare->wire();
+        Kit::check($bare->layout->sourceCheckout(), 'the explicit sign without a signed folder is from source');
         $check = $bare->guard->check();
         Kit::check($check->status === CoreCheck::SOURCE && $check->reason === 'integrity_source_checkout' && !$check->ok(),
             'the kept «no list» answer gives way to «from source»: ' . $check->status);
@@ -74,21 +82,65 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         Kit::check($run['result'] === IntegrityScanner::SOURCE && $run['reason'] === 'integrity_source_checkout', 'the full check says it is not kept');
         Kit::check($bare->restore->plan()->blockers === ['integrity_source_checkout']
             && \Larena\UpdateClient\Laravel\Integrity\IntegrityAdminController::blockerLevel('integrity_source_checkout') === 'info', 'the plan says it as information');
-        // A signed folder present (even a broken one) is a release, never «from source».
+        // A signed folder present (even a broken one) is a release, never «from source», whatever the sign says.
         mkdir($bare->release . '/.larena-signed');
         Kit::check(!$bare->layout->sourceCheckout() && $bare->guard->check()->status === CoreCheck::NO_LIST, 'a signed folder without its files is no list');
         rmdir($bare->release . '/.larena-signed');
-        rmdir($bare->release . '/.git');
     } finally {
         $bare->cleanup();
     }
-    // A base path outside a release layout (`<site>/releases/<release>`) and without git is from source too.
+
+    // The explicit sign: LARENA_SOURCE_INSTALL true, or APP_ENV=local; nothing else.
+    Kit::check(IntegrityLayout::sourceInstallMarked('1', 'production') && IntegrityLayout::sourceInstallMarked(true, 'production')
+        && IntegrityLayout::sourceInstallMarked('true', null) && IntegrityLayout::sourceInstallMarked(null, 'local')
+        && IntegrityLayout::sourceInstallMarked(false, 'local'), 'LARENA_SOURCE_INSTALL=1 or APP_ENV=local marks a source install');
+    Kit::check(!IntegrityLayout::sourceInstallMarked(null, 'production') && !IntegrityLayout::sourceInstallMarked('0', 'production')
+        && !IntegrityLayout::sourceInstallMarked('', 'staging') && !IntegrityLayout::sourceInstallMarked(false, 'testing')
+        && !IntegrityLayout::sourceInstallMarked('no', null), 'without the sign a site is never from source');
+
+    // A base path outside a release layout (`<site>/releases/<release>`) and without the sign is not from source.
     $plain = Kit::temp('plain-checkout');
     try {
-        $layout = new \Larena\UpdateClient\Integrity\IntegrityLayout($plain, $plain . '/storage/app/larena/integrity');
-        Kit::check($layout->sourceCheckout(), 'no release layout is from source');
+        $layout = new IntegrityLayout($plain, $plain . '/storage/app/larena/integrity');
+        Kit::check(!$layout->sourceCheckout(), 'no release layout alone is not from source');
+        mkdir($plain . '/.git');
+        Kit::check(!$layout->sourceCheckout(), 'nor with .git');
+        Kit::check((new IntegrityLayout($plain, $plain . '/storage/app/larena/integrity', [], true))->sourceCheckout(), 'only with the sign');
     } finally {
         Kit::remove($plain);
+    }
+
+    // --- Any hosting: the archive unpacked into a plain folder (no releases/, no current) and sealed is checked.
+    $hosted = Site::plain('plain-hosting');
+    try {
+        Kit::check(!str_contains($hosted->release, '/releases/') && is_file($hosted->release . '/.larena-signed/files.json'), 'the plain folder keeps the signed list');
+        Kit::check($hosted->guard->check()->status === CoreCheck::OK, 'a sealed plain-folder install passes the request check');
+        $run = $hosted->scan();
+        Kit::check($run['result'] === IntegrityScanner::UNCHANGED, 'and the full check: ' . (string) $run['result']);
+        mkdir($hosted->release . '/.git');
+        file_put_contents($hosted->release . '/public/index.php', "<?php eval(\$_GET['x']);\n");
+        file_put_contents($hosted->release . '/public/shell.php', "<?php system(\$_GET['c']);\n");
+        $check = $hosted->guard->check();
+        Kit::check($check->status === CoreCheck::CHANGED && ($check->problems['public/index.php'] ?? null) === 'size_differs',
+            'a changed file on plain hosting is seen on the next request, .git or not');
+        $run = $hosted->scan();
+        $paths = array_map(static fn (array $finding): string => (string) $finding['path'], $hosted->findings->open());
+        Kit::check($run['result'] === IntegrityScanner::CHANGES_FOUND && in_array('public/index.php', $paths, true) && in_array('public/shell.php', $paths, true),
+            'the full check lists the changed and the new file: ' . implode(', ', $paths));
+        // Even the explicit sign does not turn off a site that carries its signed list.
+        $hosted->sourceInstall = true;
+        $hosted->wire();
+        Kit::check($hosted->guard->check()->status === CoreCheck::CHANGED, 'a signed list is checked whatever the sign');
+    } finally {
+        $hosted->cleanup();
+    }
+    // The same plain folder without a list and without the sign: the warning «списка файлов нет».
+    $unsealed = Site::plain('plain-unsealed', false);
+    try {
+        mkdir($unsealed->release . '/.git');
+        Kit::check($unsealed->guard->check()->status === CoreCheck::NO_LIST, 'a plain folder without a list is a warning, never «from source»');
+    } finally {
+        $unsealed->cleanup();
     }
 
     // --- A3 and A4 on one site: the four negative checks, the findings, the restore and the quarantine.

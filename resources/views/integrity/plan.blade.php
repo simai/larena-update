@@ -14,8 +14,11 @@
         @elseif ($empty && $blockers === [])
             <sf-empty-state kind="no-data" size="1/2" heading-level="2" icon="task_alt" heading="{{ __('larena-update-client::integrity.restore.nothing') }}" text="{{ __('larena-update-client::integrity.restore.nothing_text') }}"></sf-empty-state>
         @endif
-        <div class="larena-page-actions m-top-1">
-            <sf-button text="{{ __('larena-update-client::integrity.finding.back') }}" appearance="outline" scheme="on-surface" href="{{ $back }}"></sf-button>
-        </div>
+        {{-- A plan carries its own «Отмена»; a second button to the same place is only shown when there is no plan. --}}
+        @if ($planned === null)
+            <div class="larena-page-actions m-top-1">
+                <sf-button text="{{ __('larena-update-client::integrity.finding.back') }}" appearance="outline" scheme="on-surface" href="{{ $back }}"></sf-button>
+            </div>
+        @endif
     </section>
 @endsection

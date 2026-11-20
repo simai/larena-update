@@ -54,13 +54,19 @@ unpacked file must match its sha256. The checked list and the signed
 description stay in `<site>/releases/<release>/.larena-signed/` for the
 integrity checks. A release built before file lists has no `files` and is
 reported as having no list. The same `FileList` format describes one package.
-A site run from its source code is not a release: when the running base path has
-no `.larena-signed/` folder and is a git checkout (`.git`) or does not lie in a
-release layout (`<site>/releases/<release>`), the checks answer
+A site run from its source code (a developer checkout) is marked explicitly:
+`LARENA_SOURCE_INSTALL=1` in its `.env`, or `APP_ENV=local`. Only then, and
+only while it has no `.larena-signed/` folder, the checks answer
 «Сайт установлен из исходного кода — проверка файлов не ведётся», an information
-that a person hides once, not a warning. A release-layout install without a list
-stays the warning «списка файлов нет». «Вернуть как было» shows the same states
-at the same level as the check page.
+that a person hides once, not a warning. Neither a `.git` folder nor the folder
+layout turns the checks off: Larena installs on any hosting, and an archive
+unpacked into a plain folder (no `releases/`) is checked like a release once
+the installer sealed it (`php artisan larena:install-seal --from=<folder with
+release.json, release.json.sig, files.json and the archive>`, which works in any
+folder). A site without the sign and without a list is the warning «списка
+файлов нет». A site that has the signed folder is always checked, whatever the
+sign says. «Вернуть как было» shows the same states at the same level as the
+check page.
 A database restore during a rollback keeps the update history: the cycles are
 carried over the restore. Nothing is installed without an operator running
 `larena:update:apply`.

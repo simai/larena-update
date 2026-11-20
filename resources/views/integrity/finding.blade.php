@@ -18,7 +18,7 @@
             @endif
             <dl class="larena-recipe-facts">
                 <div><dt>{{ __('larena-update-client::integrity.finding.state') }}</dt><dd>{{ $state }}</dd></div>
-                <div><dt>{{ __('larena-update-client::integrity.finding.path') }}</dt><dd><code>{{ $label }}</code></dd></div>
+                <div><dt>{{ __('larena-update-client::integrity.finding.path') }}</dt><dd class="text-break-word"><code>{{ $label }}</code></dd></div>
                 <div><dt>{{ __('larena-update-client::integrity.finding.first_seen') }}</dt><dd><sf-time datetime="{{ $finding['first_seen'] ?? '' }}" format="datetime"></sf-time></dd></div>
                 <div><dt>{{ __('larena-update-client::integrity.finding.last_seen') }}</dt><dd><sf-time datetime="{{ $finding['last_seen'] ?? '' }}" format="datetime"></sf-time></dd></div>
                 <div><dt>{{ __('larena-update-client::integrity.finding.count') }}</dt><dd>{{ (int) ($finding['occurrence_count'] ?? 1) }}</dd></div>
@@ -30,9 +30,9 @@
             <details class="m-top-1">
                 <summary class="color-primary">{{ __('larena-update-client::integrity.finding.more') }}</summary>
                 <dl class="larena-recipe-facts">
-                    <div><dt>{{ __('larena-update-client::integrity.finding.key') }}</dt><dd><code>{{ $finding['key'] }}</code></dd></div>
-                    <div><dt>{{ __('larena-update-client::integrity.finding.expected') }}</dt><dd><code>{{ $finding['expected_sha256'] ?? '—' }}</code></dd></div>
-                    <div><dt>{{ __('larena-update-client::integrity.finding.actual') }}</dt><dd><code>{{ $finding['actual_sha256'] ?? '—' }}</code></dd></div>
+                    <div><dt>{{ __('larena-update-client::integrity.finding.key') }}</dt><dd class="text-break-all"><code>{{ $finding['key'] }}</code></dd></div>
+                    <div><dt>{{ __('larena-update-client::integrity.finding.expected') }}</dt><dd class="text-break-all"><code>{{ $finding['expected_sha256'] ?? '—' }}</code></dd></div>
+                    <div><dt>{{ __('larena-update-client::integrity.finding.actual') }}</dt><dd class="text-break-all"><code>{{ $finding['actual_sha256'] ?? '—' }}</code></dd></div>
                     <div><dt>{{ __('larena-update-client::integrity.finding.bytes') }}</dt><dd>{{ $finding['bytes'] ?? '—' }}</dd></div>
                 </dl>
             </details>

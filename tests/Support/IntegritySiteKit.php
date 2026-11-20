@@ -10,6 +10,7 @@ use Larena\UpdateClient\Integrity\IntegrityLayout;
 use Larena\UpdateClient\Integrity\IntegrityRestore;
 use Larena\UpdateClient\Integrity\IntegrityScanner;
 use Larena\UpdateClient\Integrity\RecordingIntegrityHistory;
+use Larena\UpdateClient\Integrity\ReleaseSealer;
 use Larena\UpdateClient\Integrity\SignedBaseline;
 use Larena\UpdateClient\Release\ReleaseArchiveExtractor;
 use Larena\UpdateClient\Release\ReleaseSignatureVerifier;
@@ -47,6 +48,8 @@ final class IntegritySiteKit
     public IntegrityRestore $restore;
     /** @var array{0:string,1:string,2:string,3:string} release.json, sig, files.json, archive */
     public array $signed;
+    /** The explicit «run from source» sign (LARENA_SOURCE_INSTALL=1 or APP_ENV=local); call wire() after a change. */
+    public bool $sourceInstall = false;
 
     public static function make(string $name = 'integrity', bool $withList = true): self
     {
@@ -108,10 +111,54 @@ final class IntegritySiteKit
         return $kit;
     }
 
+    /**
+     * The same signed release installed on plain hosting: the archive unpacked straight into `<site>/public_html`
+     * (no `releases/`, no `current`, storage and .env as ordinary folders inside), then sealed the way the installer
+     * does it (core `larena:install-seal`, {@see ReleaseSealer}) from the four files shipped with the archive.
+     */
+    public static function plain(string $name = 'plain', bool $sealed = true): self
+    {
+        $kit = self::make($name . '-signed');
+        $root = $kit->site . '/public_html';
+        mkdir($root);
+        foreach (self::FILES as $path => $data) {
+            if (!is_dir(dirname($root . '/' . $path))) {
+                mkdir(dirname($root . '/' . $path), 0755, true);
+            }
+            file_put_contents($root . '/' . $path, $data);
+        }
+        $storage = $root . '/storage';
+        foreach (['app/public', 'framework/cache', 'framework/sessions', 'framework/views', 'logs'] as $folder) {
+            mkdir($storage . '/' . $folder, 0755, true);
+        }
+        file_put_contents($storage . '/app/public/photo.jpg', 'jpeg');
+        file_put_contents($root . '/.env', "APP_ENV=production\n");
+        if ($sealed) {
+            $from = $kit->site . '/shipped';
+            mkdir($from);
+            foreach (['release.json', 'release.json.sig', 'files.json', 'larena-1.3.0.tar.gz'] as $index => $file) {
+                file_put_contents($from . '/' . $file, $kit->signed[$index]);
+            }
+            $result = (new ReleaseSealer(['release.test' => $kit->publicKey]))->seal($root, $from);
+            UpdateClientTestKit::remove($from);
+            if ($result['sealed'] !== true) {
+                throw new \RuntimeException('plain_seal_failed');
+            }
+        }
+        // The release-layout copy the signed files came from is not part of this site.
+        UpdateClientTestKit::remove($kit->site . '/releases');
+        UpdateClientTestKit::remove($kit->storage);
+        $kit->release = $root;
+        $kit->storage = $storage;
+        $kit->wire();
+
+        return $kit;
+    }
+
     public function wire(): void
     {
         $this->history = new RecordingIntegrityHistory();
-        $this->layout = new IntegrityLayout($this->release, $this->storage . '/app/larena/integrity', IntegrityLayout::storageRoots($this->storage));
+        $this->layout = new IntegrityLayout($this->release, $this->storage . '/app/larena/integrity', IntegrityLayout::storageRoots($this->storage), $this->sourceInstall);
         $layout = $this->layout;
         $key = $this->publicKey;
         $baseline = static fn (): SignedBaseline => SignedBaseline::load($layout, ['release.test' => $key]);

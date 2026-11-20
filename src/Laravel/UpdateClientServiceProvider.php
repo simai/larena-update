@@ -96,6 +96,7 @@ final class UpdateClientServiceProvider extends ServiceProvider
                 $app->basePath(),
                 is_string($directory) && $directory !== '' ? $directory : $app->storagePath('app/larena/integrity'),
                 IntegrityLayout::storageRoots($app->storagePath()),
+                IntegrityLayout::sourceInstallMarked($config->get('update-client.integrity.source_install'), (string) $app->environment()),
             );
 
             return new SiteIntegrity($layout, self::trustedKeys($config), self::revokedKeys($config), $app->make(IntegrityHistory::class));

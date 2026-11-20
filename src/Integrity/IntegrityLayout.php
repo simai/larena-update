@@ -17,6 +17,9 @@ use RuntimeException;
  * - `stateDirectory`: the checks' own files (`storage/app/larena/integrity`): the per-request cache, the scan's
  *   cursor, the findings and the quarantine. It lies in the shared storage, outside the web root and outside every
  *   release, so it survives a release switch; it is never scanned itself.
+ * - `sourceInstall`: the site was marked as run from its source code (env `LARENA_SOURCE_INSTALL=1`, or
+ *   `APP_ENV=local`; {@see self::sourceInstallMarked()}). Only this explicit sign turns the checks into «from source»;
+ *   neither `.git` nor the folder layout does (any hosting: an archive unpacked into a plain folder is checked too).
  */
 final readonly class IntegrityLayout
 {
@@ -27,6 +30,7 @@ final readonly class IntegrityLayout
         public string $releaseRoot,
         public string $stateDirectory,
         public array $dataRoots = [],
+        public bool $sourceInstall = false,
     ) {
         if ($releaseRoot === '' || $releaseRoot[0] !== '/' || $stateDirectory === '' || $stateDirectory[0] !== '/') {
             throw new RuntimeException('integrity_layout_invalid');
@@ -59,11 +63,11 @@ final readonly class IntegrityLayout
     }
 
     /**
-     * A site run from its source code (a developer checkout, larena.test), not from a release: no signed folder
-     * `.larena-signed/` (not even a broken link to one), and the base path is a git checkout (`.git`, a folder or a
-     * worktree's file) or does not lie in a release layout (`<site>/releases/<release>`). Such a site has no signed
-     * list by its nature, so its files are not checked: that is information, not a warning. A release-layout install
-     * without a list stays the warning «списка файлов нет».
+     * A site run from its source code (a developer checkout, larena.test), not from a release: it was marked so
+     * explicitly ({@see self::$sourceInstall}) and has no signed folder `.larena-signed/` (not even a broken link to
+     * one). Such a site has no signed list by its nature, so its files are not checked: that is information, not a
+     * warning. A `.git` folder or a base path outside `<site>/releases/<release>` changes nothing: a site without the
+     * sign and without a list is the warning «списка файлов нет», and a site with a signed folder is always checked.
      */
     public function sourceCheckout(): bool
     {
@@ -71,9 +75,20 @@ final readonly class IntegrityLayout
         if (file_exists($signed) || is_link($signed)) {
             return false;
         }
-        $root = rtrim($this->releaseRoot, '/');
 
-        return file_exists($root . '/.git') || basename(dirname($root)) !== 'releases';
+        return $this->sourceInstall;
+    }
+
+    /**
+     * The explicit sign of a site run from source: `LARENA_SOURCE_INSTALL` set to a true value (1, true, yes, on), or
+     * the application environment `local`. Nothing on disk is consulted.
+     */
+    public static function sourceInstallMarked(mixed $flag, ?string $environment): bool
+    {
+        $marked = is_bool($flag) ? $flag
+            : (is_int($flag) ? $flag === 1 : (is_string($flag) && in_array(strtolower(trim($flag)), ['1', 'true', 'yes', 'on'], true)));
+
+        return $marked || $environment === 'local';
     }
 
     public function signedDirectory(): string

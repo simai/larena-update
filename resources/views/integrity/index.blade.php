@@ -18,7 +18,7 @@
                 {!! $C::alert(__('larena-update-client::integrity.core.changed_text', ['count' => count($check->problems)]), 'danger', $checkWords['status']) !!}
                 <ul class="m-top-1">
                     @foreach ($check->problems as $path => $problem)
-                        <li><code>{{ $path }}</code> — {{ __('larena-update-client::integrity.problems.' . $problem) }}</li>
+                        <li class="text-break-word"><code>{{ $path }}</code> — {{ __('larena-update-client::integrity.problems.' . $problem) }}</li>
                     @endforeach
                 </ul>
             @elseif ($check->status === 'source')
@@ -73,7 +73,7 @@
                     @else
                         <ul class="m-0">
                             @foreach ($items as $finding)
-                                <li class="m-bottom-1">
+                                <li class="m-bottom-1 text-break-word">
                                     <a href="{{ route('larena.update-client.integrity.finding', ['key' => $finding['key']], false) }}"><code>{{ $label($finding) }}</code></a>
                                     — {{ $kind($finding['kind']) }}
                                     <span class="text-small color-on-surface-variant">· <sf-time datetime="{{ $finding['last_seen'] ?? '' }}" format="datetime"></sf-time></span>
@@ -94,7 +94,7 @@
             @else
                 <ul class="m-0">
                     @foreach ($quarantine as $item)
-                        <li class="m-bottom-1">
+                        <li class="m-bottom-1 text-break-word">
                             <code>{{ $label($item) }}</code>
                             <span class="text-small color-on-surface-variant">· <sf-time datetime="{{ $item['moved_at'] }}" format="datetime"></sf-time></span>
                             @if ($canAct)
