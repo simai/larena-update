@@ -9,10 +9,21 @@ use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Foundation\Http\Middleware\PreventRequestsDuringMaintenance;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Http\Request;
+use Larena\UpdateClient\Integrity\IntegrityLayout;
+use Larena\UpdateClient\Integrity\IntegrityHistory;
+use Larena\UpdateClient\Integrity\ReleaseSealer;
+use Larena\UpdateClient\Laravel\Console\IntegrityCheckCommand;
+use Larena\UpdateClient\Laravel\Console\IntegrityRestoreCommand;
 use Larena\UpdateClient\Laravel\Console\UpdateApplyCommand;
 use Larena\UpdateClient\Laravel\Console\UpdateCheckCommand;
 use Larena\UpdateClient\Laravel\Console\UpdateRollbackCommand;
 use Larena\UpdateClient\Laravel\Console\UpdateStatusCommand;
+use Larena\UpdateClient\Laravel\Integrity\AuditIntegrityHistory;
+use Larena\UpdateClient\Laravel\Integrity\CheckCoreFiles;
+use Larena\UpdateClient\Laravel\Integrity\IntegrityAdminController;
+use Larena\UpdateClient\Laravel\Integrity\IntegrityScanJobHandler;
+use Larena\UpdateClient\Laravel\Integrity\SiteIntegrity;
 use Larena\UpdateClient\Source\CurlUpdateHttpClient;
 use Larena\UpdateClient\Source\UpdateHttpClient;
 use PDO;
@@ -22,12 +33,17 @@ use Psr\Log\LoggerInterface;
  * The update client in a Larena site: configuration `update-client`, the `update_cycles` table, the commands
  * `larena:update:check|apply|rollback|status` and the internal activation address
  * `POST /_larena/update/opcache-reset` (one-time token, see {@see OpcacheResetActivation}).
+ *
+ * The site's own file checks (owner decision 2026-11-20, {@see SiteIntegrity}): the main files on every request
+ * (global middleware), the full check through the scheduler and the queue in portions, the alert bar, the pages
+ * `/admin/integrity` with «Вернуть как было», `larena:integrity:check|restore`, and core's installer seal.
  */
 final class UpdateClientServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
         $this->mergeConfigFrom(__DIR__ . '/../../config/update-client.php', 'update-client');
+        $this->registerIntegrity();
 
         $this->app->singletonIf(UpdateHttpClient::class, static fn (): UpdateHttpClient => new CurlUpdateHttpClient());
         $this->app->singletonIf(ArtisanRunner::class, static function (Application $app): ArtisanRunner {
@@ -68,8 +84,146 @@ final class UpdateClientServiceProvider extends ServiceProvider
         });
     }
 
+    private function registerIntegrity(): void
+    {
+        $this->app->singleton(SiteIntegrity::class, static function (Application $app): SiteIntegrity {
+            /** @var ConfigRepository $config */
+            $config = $app->make(ConfigRepository::class);
+            $directory = $config->get('update-client.integrity.state_directory');
+            $layout = new IntegrityLayout(
+                $app->basePath(),
+                is_string($directory) && $directory !== '' ? $directory : $app->storagePath('app/larena/integrity'),
+                IntegrityLayout::storageRoots($app->storagePath()),
+            );
+
+            return new SiteIntegrity($layout, self::trustedKeys($config), self::revokedKeys($config), $app->make(IntegrityHistory::class));
+        });
+        $this->app->singletonIf(IntegrityHistory::class, static fn (Application $app): IntegrityHistory => new AuditIntegrityHistory(
+            $app->make(LoggerInterface::class),
+            static fn (): ?object => class_exists(\Larena\Audit\Runtime\AuditEventPipeline::class) && $app->bound(\Larena\Audit\Runtime\AuditEventPipeline::class)
+                ? $app->make(\Larena\Audit\Runtime\AuditEventPipeline::class) : null,
+        ));
+        $this->app->bind(IntegrityAdminController::class, static fn (Application $app): IntegrityAdminController => new IntegrityAdminController(
+            $app->make(SiteIntegrity::class),
+            $app->make('view'),
+            $app->make('translator'),
+            self::allows($app),
+        ));
+        // Core's installer seal: the update client checks the signature, the list, the archive and every file.
+        if (interface_exists(\Larena\Core\Contracts\InstalledReleaseSeal::class)) {
+            $this->app->bind(\Larena\Core\Contracts\InstalledReleaseSeal::class, static fn (Application $app): \Larena\Core\Contracts\InstalledReleaseSeal
+                => new \Larena\UpdateClient\Laravel\Integrity\SiteInstalledReleaseSeal(new ReleaseSealer(
+                    self::trustedKeys($app->make(ConfigRepository::class)), self::revokedKeys($app->make(ConfigRepository::class)))));
+        }
+        if (class_exists(\Larena\Queue\Runtime\JobTypeRegistry::class)) {
+            $this->app->afterResolving(\Larena\Queue\Runtime\JobTypeRegistry::class, static function (\Larena\Queue\Runtime\JobTypeRegistry $registry, Application $app): void {
+                self::registerScanJob($registry, $app);
+            });
+        }
+        if (class_exists(\Larena\Scheduler\Runtime\ScheduledOperationRegistry::class)) {
+            $this->app->afterResolving(\Larena\Scheduler\Runtime\ScheduledOperationRegistry::class, static function (\Larena\Scheduler\Runtime\ScheduledOperationRegistry $registry, Application $app): void {
+                if (!$registry->has(IntegrityScanJobHandler::OPERATION)) {
+                    $registry->register($app->make(\Larena\UpdateClient\Laravel\Integrity\IntegrityScheduledScan::class));
+                }
+            });
+        }
+        // The alert bar of the admin, where the admin has one (owner decision 2026-11-05).
+        if (interface_exists(\Larena\Admin\Contracts\AdminAlertSource::class) && class_exists(\Larena\Admin\Alerts\AdminAlerts::class)) {
+            $this->callAfterResolving(\Larena\Admin\Alerts\AdminAlerts::class, static function (\Larena\Admin\Alerts\AdminAlerts $alerts, Application $app): void {
+                $alerts->register('larena/update-client:integrity', new \Larena\UpdateClient\Laravel\Integrity\IntegrityAdminAlertSource(
+                    $app->make(SiteIntegrity::class), $app->make('translator'), self::allows($app)));
+            });
+        }
+    }
+
+    private static function registerScanJob(\Larena\Queue\Runtime\JobTypeRegistry $registry, Application $app): void
+    {
+        if ($registry->has(IntegrityScanJobHandler::JOB_TYPE)) {
+            return;
+        }
+        $config = $app->make(ConfigRepository::class);
+        $registry->register(new \Larena\Queue\Runtime\ImmutableJobDescriptor(
+            IntegrityScanJobHandler::JOB_TYPE, IntegrityScanJobHandler::OPERATION, 'update.integrity.scan.handler',
+            120, 3, 30, 60, \Larena\Queue\Enums\QueuePriority::Maintenance, 'consumer_owned_required', 'larena.update.integrity.scan.payload',
+            [\Larena\Queue\Enums\RuntimeProfile::LaravelWorker, \Larena\Queue\Enums\RuntimeProfile::LarenaDispatcher, \Larena\Queue\Enums\RuntimeProfile::ArtisanTick],
+            2000,
+        ), new IntegrityScanJobHandler(
+            $app->make(SiteIntegrity::class),
+            max(100, (int) $config->get('update-client.integrity.portion_files', 2000)),
+            max(0.5, (float) $config->get('update-client.integrity.portion_seconds', 5)),
+        ));
+    }
+
+    /** @return array<string,string> */
+    private static function trustedKeys(ConfigRepository $config): array
+    {
+        try {
+            $keys = SiteUpdateClient::withReleaseKeys((array) $config->get('update-client', []), $config->get(SiteUpdateClient::RELEASE_KEYS_CONFIG))['trusted_keys'];
+        } catch (\Throwable) {
+            return [];
+        }
+
+        return array_filter(is_array($keys) ? $keys : [], static fn (mixed $key, mixed $id): bool => is_string($id) && is_string($key), ARRAY_FILTER_USE_BOTH);
+    }
+
+    /** @return list<string> */
+    private static function revokedKeys(ConfigRepository $config): array
+    {
+        $revoked = $config->get('update-client.revoked_key_ids', []);
+
+        return array_values(array_filter(is_array($revoked) ? $revoked : [], 'is_string'));
+    }
+
+    /** @return \Closure(Request, string): bool whether the request's person may do an access operation */
+    private static function allows(Application $app): \Closure
+    {
+        return static function (Request $request, string $operation) use ($app): bool {
+            if (!class_exists(\Larena\Access\Runtime\AccessOperationAuthorizer::class) || !$app->bound(\Larena\Access\Runtime\AccessOperationAuthorizer::class)) {
+                return false;
+            }
+            try {
+                return $app->make(\Larena\Access\Runtime\AccessOperationAuthorizer::class)->authorize($request, $operation)->isAllowed();
+            } catch (\Throwable) {
+                return false;
+            }
+        };
+    }
+
+    private function bootIntegrity(ConfigRepository $config): void
+    {
+        $this->loadViewsFrom(__DIR__ . '/../../resources/views', 'larena-update-client');
+        $this->loadTranslationsFrom(__DIR__ . '/../../resources/lang', 'larena-update-client');
+        // «История» shows the integrity family in words.
+        $sources = $config->get('larena-audit.history_sources', []);
+        if (!is_array($sources) || !in_array(IntegrityHistory::PREFIX, array_column($sources, 'prefix'), true)) {
+            $config->push('larena-audit.history_sources', ['prefix' => IntegrityHistory::PREFIX,
+                'label' => 'larena-update-client::integrity.history.label', 'words' => 'larena-update-client::integrity.history.events']);
+        }
+        if ((bool) $config->get('update-client.integrity.admin.enabled', true) && class_exists(\Larena\Admin\Alerts\AdminAlerts::class)) {
+            $this->app->make('router')
+                ->middleware((array) $config->get('update-client.integrity.admin.middleware', ['web']))
+                ->prefix((string) $config->get('update-client.integrity.admin.prefix', 'admin/integrity'))
+                ->group(__DIR__ . '/../../routes/integrity.php');
+        }
+        if ((bool) $config->get('update-client.integrity.every_request', true)) {
+            $kernel = $this->app->bound(\Illuminate\Contracts\Http\Kernel::class) ? $this->app->make(\Illuminate\Contracts\Http\Kernel::class) : null;
+            if (is_object($kernel) && method_exists($kernel, 'prependMiddleware')) {
+                $kernel->prependMiddleware(CheckCoreFiles::class);
+            }
+        }
+        $schedule = $config->get('update-client.integrity.schedule');
+        if (is_string($schedule) && $schedule !== '' && class_exists(\Illuminate\Console\Scheduling\Schedule::class)) {
+            $this->callAfterResolving(\Illuminate\Console\Scheduling\Schedule::class, static function (\Illuminate\Console\Scheduling\Schedule $scheduled) use ($schedule, $config): void {
+                $scheduled->command('larena:integrity:check --queue --seconds=' . max(1, (int) $config->get('update-client.integrity.scheduled_seconds', 50)))
+                    ->cron($schedule)
+                    ->withoutOverlapping();
+            });
+        }
+    }
+
     public function boot(): void
     {
+        $this->bootIntegrity($this->app->make(ConfigRepository::class));
         $this->loadMigrationsFrom(__DIR__ . '/../../database/migrations');
         $this->loadRoutesFrom(__DIR__ . '/../../routes/update-client.php');
         $this->publishes([__DIR__ . '/../../config/update-client.php' => $this->app->configPath('update-client.php')], 'larena-update-client-config');
@@ -86,6 +240,8 @@ final class UpdateClientServiceProvider extends ServiceProvider
                 UpdateApplyCommand::class,
                 UpdateRollbackCommand::class,
                 UpdateStatusCommand::class,
+                IntegrityCheckCommand::class,
+                IntegrityRestoreCommand::class,
             ]);
         }
     }

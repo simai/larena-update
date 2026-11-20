@@ -56,6 +56,21 @@ final readonly class ReleaseSignatureVerifier
      */
     public function verify(string $releaseBytes, string $signatureBytes, string $installedVersion, string $channel = 'stable'): VerifiedRelease
     {
+        return $this->read($releaseBytes, $signatureBytes, $installedVersion, $channel);
+    }
+
+    /**
+     * The signed description a site keeps with a release it already runs (`<release>/.larena-signed/`): the same
+     * signature, key and content rules as {@see verify()}, without the «newer than installed» and channel rules, which
+     * only make sense before an update. The integrity checks use it to trust the kept file list again.
+     */
+    public function verifyKept(string $releaseBytes, string $signatureBytes): VerifiedRelease
+    {
+        return $this->read($releaseBytes, $signatureBytes, null, null);
+    }
+
+    private function read(string $releaseBytes, string $signatureBytes, ?string $installedVersion, ?string $channel): VerifiedRelease
+    {
         if (strlen($releaseBytes) < 2 || strlen($releaseBytes) > self::MAX_RELEASE_BYTES
             || strlen($signatureBytes) < 2 || strlen($signatureBytes) > self::MAX_SIGNATURE_BYTES) {
             throw new RuntimeException('release_files_invalid');
@@ -82,17 +97,23 @@ final readonly class ReleaseSignatureVerifier
         if (($release['product'] ?? null) !== $this->product) {
             throw new RuntimeException('release_product_differs');
         }
-        if (($release['channel'] ?? null) !== $channel) {
+        if ($channel !== null && ($release['channel'] ?? null) !== $channel) {
+            throw new RuntimeException('release_channel_differs');
+        }
+        $releaseChannel = $release['channel'] ?? null;
+        if (!is_string($releaseChannel) || preg_match('/\A[a-z][a-z0-9_-]{0,31}\z/D', $releaseChannel) !== 1) {
             throw new RuntimeException('release_channel_differs');
         }
         $version = self::version($release['version'] ?? null);
         $minimum = self::version($release['minimum_version'] ?? null);
-        $installed = self::version($installedVersion);
-        if (version_compare($version, $installed, '<=')) {
-            throw new RuntimeException('release_not_newer');
-        }
-        if (version_compare($installed, $minimum, '<')) {
-            throw new RuntimeException('release_installed_too_old');
+        if ($installedVersion !== null) {
+            $installed = self::version($installedVersion);
+            if (version_compare($version, $installed, '<=')) {
+                throw new RuntimeException('release_not_newer');
+            }
+            if (version_compare($installed, $minimum, '<')) {
+                throw new RuntimeException('release_installed_too_old');
+            }
         }
         $archive = $release['archive'] ?? null;
         if (!is_array($archive)
@@ -140,7 +161,7 @@ final readonly class ReleaseSignatureVerifier
         return new VerifiedRelease(
             product: $this->product,
             version: $version,
-            channel: $channel,
+            channel: $releaseChannel,
             minimumVersion: $minimum,
             php: $php,
             archiveFile: $archive['file'],

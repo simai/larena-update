@@ -113,6 +113,11 @@ final readonly class ReleaseArchiveExtractor
                         throw new RuntimeException('release_directory_write_failed');
                     }
                 }
+                // «Вернуть как было» takes clean files from this archive while there is no update server: it stays
+                // with the release it built, beside the signed description that names its sha256.
+                if ($list !== null && $releaseBytes !== null) {
+                    self::keepArchive($release, $archivePath, $partial . '/' . self::SIGNED);
+                }
             }
             if (file_put_contents($partial . '/' . self::MARKER, $marker) === false || !rename($partial, $target)) {
                 throw new RuntimeException('release_directory_write_failed');
@@ -123,6 +128,126 @@ final readonly class ReleaseArchiveExtractor
         }
 
         return $target;
+    }
+
+    /**
+     * Keeps the verified archive of a release in its signed folder under the name `release.json` gives it: a hard link
+     * where the download folder is on the same disk, a copy otherwise. The kept file is checked against the signed
+     * sha256 before it counts.
+     */
+    public static function keepArchive(VerifiedRelease $release, string $archivePath, string $signedDirectory): string
+    {
+        ReleaseSignatureVerifier::verifyArchive($release, $archivePath);
+        $kept = rtrim($signedDirectory, '/') . '/' . $release->archiveFile;
+        if (is_link($kept) || file_exists($kept)) {
+            ReleaseSignatureVerifier::verifyArchive($release, $kept);
+
+            return $kept;
+        }
+        $temporary = $kept . '.partial';
+        ReleaseDirectory::remove($temporary);
+        if (!@link($archivePath, $temporary) && !@copy($archivePath, $temporary)) {
+            throw new RuntimeException('release_archive_keep_failed');
+        }
+        try {
+            ReleaseSignatureVerifier::verifyArchive($release, $temporary);
+            @chmod($temporary, 0644);
+            if (!rename($temporary, $kept)) {
+                throw new RuntimeException('release_archive_keep_failed');
+            }
+        } catch (Throwable $exception) {
+            ReleaseDirectory::remove($temporary);
+            throw $exception;
+        }
+
+        return $kept;
+    }
+
+    /**
+     * Writes the named files of a release again from its archive (part A4, «Вернуть как было»): each one into a
+     * temporary file beside its place, checked against the list's sha256, then renamed over the place in one step.
+     * The archive itself must match the list's archive sha256 first (`release_archive_checksum_differs`); a path the
+     * list does not name as a file is refused (`release_files_entry_missing`). Nothing else of the release is touched.
+     *
+     * @param list<string> $paths
+     * @return list<string> the paths written
+     */
+    public function restoreEntries(string $archivePath, FileList $list, array $paths, string $root): array
+    {
+        $root = rtrim($root, '/');
+        if ($root === '' || is_link($root) || !is_dir($root)) {
+            throw new RuntimeException('release_files_root_invalid');
+        }
+        $wanted = [];
+        foreach ($paths as $path) {
+            if (($list->entries[$path]['type'] ?? null) !== 'file') {
+                throw new RuntimeException('release_files_entry_missing');
+            }
+            $wanted[$path] = true;
+        }
+        if ($wanted === []) {
+            return [];
+        }
+        $sha = is_file($archivePath) && !is_link($archivePath) ? hash_file('sha256', $archivePath) : false;
+        if (!is_string($sha) || !hash_equals($list->archiveSha256, $sha)) {
+            throw new RuntimeException('release_archive_checksum_differs');
+        }
+        $written = [];
+        $this->walk(
+            $archivePath,
+            static function (string $path): void {
+            },
+            static function (string $path, int $size, int $mode, $gz) use (&$written, $wanted, $list, $root): void {
+                if (!isset($wanted[$path])) {
+                    $left = $size;
+                    while ($left > 0) {
+                        $left -= strlen(self::read($gz, min($left, self::CHUNK)));
+                    }
+
+                    return;
+                }
+                $slash = strrpos($path, '/');
+                if ($slash !== false) {
+                    self::directory($root, substr($path, 0, $slash));
+                }
+                $file = $root . '/' . $path;
+                $temporary = $file . '.larena-restore-' . bin2hex(random_bytes(6));
+                $out = @fopen($temporary, 'xb');
+                if ($out === false) {
+                    throw new RuntimeException('release_directory_write_failed');
+                }
+                $hash = hash_init('sha256');
+                try {
+                    $left = $size;
+                    while ($left > 0) {
+                        $chunk = self::read($gz, min($left, self::CHUNK));
+                        if (fwrite($out, $chunk) !== strlen($chunk)) {
+                            throw new RuntimeException('release_directory_write_failed');
+                        }
+                        hash_update($hash, $chunk);
+                        $left -= strlen($chunk);
+                    }
+                } finally {
+                    fclose($out);
+                }
+                if (!hash_equals((string) ($list->entries[$path]['sha256'] ?? ''), hash_final($hash))) {
+                    @unlink($temporary);
+                    throw new RuntimeException('release_files_checksum_differs');
+                }
+                chmod($temporary, ($mode & 0111) !== 0 ? 0755 : 0644);
+                // A directory or a link where the file belongs is not overwritten by rename: refused, left for a person.
+                if ((is_link($file) || is_dir($file)) || !rename($temporary, $file)) {
+                    @unlink($temporary);
+                    throw new RuntimeException('release_directory_write_failed');
+                }
+                $written[] = $path;
+            },
+        );
+        if (count($written) !== count($wanted)) {
+            throw new RuntimeException('release_files_entry_missing');
+        }
+
+        return $written;
     }
 
     /**

@@ -1,0 +1,204 @@
+<?php
+
+declare(strict_types=1);
+
+// «File integrity» (owner decision 2026-11-20): plain words for the site owner.
+return [
+    'title' => 'File integrity',
+    'description' => 'The site checks its own files against the signed list of its release and puts them back if something changed them.',
+    'archive_where' => 'Clean files come from the release archive: :path',
+    'archive_none' => 'no archive',
+
+    'alerts' => [
+        'source' => 'Site files',
+        'core' => 'Main site files are changed: :count. The site works. Put them back as they were.',
+        'findings' => 'The check found changes in the site files: :count.',
+        'no_list' => 'The site files have nothing to be compared with: there is no file list.',
+        'unknown' => 'The site files could not be checked: :reason',
+        'open' => 'View',
+    ],
+
+    'core' => [
+        'heading' => 'Main files',
+        'ok' => 'Main files are fine',
+        'changed' => 'Main files are changed',
+        'no_list' => 'No file list',
+        'unknown' => 'Could not check',
+        'ok_text' => 'Checked on every page: :count files — the entry point, the autoloader, the settings and .htaccess.',
+        'changed_text' => 'Files changed: :count. The site and the admin work, but these files are not as in the release.',
+    ],
+
+    'problems' => [
+        'missing' => 'deleted',
+        'type_differs' => 'something else is in its place',
+        'size_differs' => 'changed',
+        'checksum_differs' => 'changed',
+    ],
+
+    'full' => [
+        'heading' => 'Full check',
+        'running' => 'Checking: :count files so far',
+        'running_text' => 'The check runs in portions and does not slow the site. Reload the page later.',
+        'result' => 'Result',
+        'finished' => 'Finished',
+        'files' => 'Release files checked',
+        'folders' => 'Folders looked at',
+        'errors' => 'Could not be read',
+        'never' => 'No full check yet',
+        'never_text' => 'It starts by itself on schedule. You can run it now.',
+        'check_now' => 'Check now',
+    ],
+
+    'results' => [
+        'unchanged' => 'No changes',
+        'changes_found' => 'Changes found',
+        'unknown' => 'Could not check',
+        'running' => 'Checking',
+    ],
+
+    'kinds' => [
+        'changed' => 'File changed',
+        'deleted' => 'File deleted',
+        'type_differs' => 'Something else in place of the file',
+        'htaccess_replaced' => '.htaccess replaced',
+        'new_php' => 'Extra PHP file',
+        'new_htaccess' => 'Extra .htaccess',
+        'archive_damaged' => 'Release archive damaged',
+        'archive_missing' => 'Release archive missing',
+    ],
+
+    'explain' => [
+        'changed' => 'This release file is not as in the signed list. A bot may have changed it, or a person by mistake.',
+        'deleted' => 'This release file is not in its place.',
+        'type_differs' => 'A folder or a link sits in place of a release file.',
+        'htaccess_replaced' => 'The web server rules (.htaccess) are not as in the release. Bots often switch on their scripts this way.',
+        'new_php' => 'This PHP file is not in the release. Upload and cache folders should hold no PHP files.',
+        'new_htaccess' => 'This .htaccess is not in the release. It can make scripts in uploads run.',
+        'archive_damaged' => 'The archive clean files come from does not match its signature. Files cannot be put back from it.',
+        'archive_missing' => 'The archive clean files come from is not in its place.',
+    ],
+
+    'states' => [
+        'open' => 'Needs a decision',
+        'accepted_exception' => 'Accepted as an exception',
+        'resolved' => 'Fixed',
+    ],
+
+    'findings' => [
+        'open' => 'Found: :count',
+        'accepted' => 'Accepted as exceptions: :count',
+        'resolved' => 'Fixed recently: :count',
+        'none' => 'Nothing found.',
+    ],
+
+    'finding' => [
+        'title' => 'Finding',
+        'state' => 'State',
+        'path' => 'File',
+        'first_seen' => 'First seen',
+        'last_seen' => 'Last seen',
+        'count' => 'Times seen',
+        'exception' => 'Exception',
+        'exception_value' => ':scope — :reason, until',
+        'what_restore_does' => 'What «Put back as it was» does',
+        'more' => 'More',
+        'key' => 'Finding key',
+        'expected' => 'SHA-256 in the release',
+        'actual' => 'SHA-256 now',
+        'bytes' => 'Size, bytes',
+        'back' => 'Back to the file check',
+    ],
+
+    'accept' => [
+        'heading' => 'Accept the change',
+        'text' => 'If you made this change and need it, accept it for a while. When the time is up, the check shows the file again.',
+        'scope' => 'What to accept',
+        'scope_file' => 'This file only',
+        'scope_folder' => 'The whole folder',
+        'until' => 'For how long',
+        'days' => ':count days',
+        'reason' => 'Why',
+        'button' => 'Accept',
+    ],
+
+    'restore' => [
+        'button' => 'Put back as it was',
+        'heading' => 'Put back as it was',
+        'question' => 'Put the site files back as they were?',
+        'accept' => 'Put back',
+        'consequence' => 'Release files come from the archive, extra files go to the quarantine. They can come back from there.',
+        'from_archive' => 'Put back from the release archive: :count',
+        'to_quarantine' => 'Move to the quarantine: :count',
+        'then' => 'Then',
+        'then_value' => 'A full file check right away',
+        'plan_digest' => 'Plan fingerprint',
+        'archive' => 'Release archive',
+        'nothing' => 'Nothing to put back',
+        'nothing_text' => 'All files are as in the release.',
+        'does_restore' => 'Takes this file from the release archive, checked against the signature.',
+        'does_quarantine' => 'Moves the file to the quarantine. It is not deleted and can come back.',
+        'does_nothing' => 'Nothing: an intact release archive is needed first.',
+    ],
+
+    'quarantine' => [
+        'title' => 'Quarantine: :count',
+        'where' => 'Extra files are not deleted: they are kept in the site storage, outside web access, and never run.',
+        'empty' => 'The quarantine is empty.',
+        'return' => 'Put back in place',
+        'heading' => 'Put a file back from the quarantine',
+        'question' => 'Put :path back in its place?',
+        'accept' => 'Put back in place',
+        'consequence' => 'The next check shows this file again until you accept it as an exception.',
+        'place' => 'Where to',
+        'moved' => 'Moved to the quarantine',
+    ],
+
+    'notices' => [
+        'checked' => 'The check is finished: :result.',
+        'checking' => 'The check is running. It finishes by itself, in portions.',
+        'restored' => 'Done: :restored files put back, :quarantined moved to the quarantine. The check after it: :result.',
+        'returned' => 'The file is back in its place.',
+        'accepted' => 'The change is accepted: :scope.',
+    ],
+
+    'reasons' => [
+        'integrity_list_missing' => 'there is no file list. The site was installed without a signed release, so there is nothing to compare with.',
+        'integrity_list_untrusted' => 'the file list did not pass the signature check.',
+        'integrity_keys_missing' => 'the site has no release key to check a signature with.',
+        'integrity_read_failed' => 'some files or folders could not be read. A partial check is not a success.',
+        'integrity_check_failed' => 'the check could not run.',
+        'integrity_state_unwritable' => 'the check folder in the storage cannot be written.',
+        'integrity_archive_damaged' => 'the release archive is damaged: files cannot be put back from it.',
+        'integrity_archive_missing' => 'the release archive is not in its place.',
+        'integrity_plan_changed' => 'the files changed after the plan was shown. Open the plan again.',
+        'integrity_plan_receipt' => 'the plan is out of date or was already done. Open it again.',
+        'integrity_nothing_to_restore' => 'there is nothing to put back.',
+        'integrity_place_taken' => 'the file\'s place is taken.',
+        'integrity_quarantine_damaged' => 'the file in the quarantine is not the one moved there.',
+        'integrity_quarantine_unknown' => 'there is no such file in the quarantine.',
+        'integrity_quarantine_unwritable' => 'the quarantine cannot be written.',
+        'integrity_place_unwritable' => 'the file cannot be written to its place.',
+        'integrity_restore_busy' => 'a restore is already running.',
+        'integrity_file_unreadable' => 'the file could not be read.',
+        'integrity_exception_scope_invalid' => 'what to accept is not valid.',
+        'integrity_exception_until_invalid' => 'the end must be in the future and within a year.',
+        'integrity_exception_reason_invalid' => 'write why you accept the change.',
+        'release_files_checksum_differs' => 'a file from the archive did not match the release list.',
+        'release_archive_checksum_differs' => 'the release archive does not match its signature.',
+        'release_directory_write_failed' => 'a file cannot be written to the release folder.',
+        'other' => 'unknown reason.',
+    ],
+
+    'history' => [
+        'label' => 'File integrity',
+        'events' => [
+            'update_integrity_check_completed' => 'Site files checked',
+            'update_integrity_core_changed' => 'Main files changed',
+            'update_integrity_restore_succeeded' => 'Files put back as they were',
+            'update_integrity_restore_failed' => 'Putting files back failed',
+            'update_integrity_restore_refused' => 'Putting files back refused',
+            'update_integrity_quarantine_returned' => 'File put back from the quarantine',
+            'update_integrity_exception_accepted' => 'File change accepted as an exception',
+        ],
+    ],
+];

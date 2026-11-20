@@ -70,4 +70,26 @@ return [
         'path' => '_larena/update/opcache-reset',
         'token_ttl' => 120,
     ],
+
+    // The site's own check of its files (owner decision 2026-11-20: any hosting, bots and user mistakes, everything a
+    // user can break comes back): the main files on every request, the full check in portions, «Вернуть как было».
+    'integrity' => [
+        // A2: the main files of the signed list on every request (global middleware). The site always keeps working.
+        'every_request' => (bool) env('LARENA_INTEGRITY_EVERY_REQUEST', true),
+        // A3: when the full check starts (cron expression, the site's `schedule:run`); it runs through the Larena queue
+        // in portions where the queue is installed, else in portions of at most `scheduled_seconds` per tick.
+        'schedule' => env('LARENA_INTEGRITY_SCHEDULE', '17 * * * *'),
+        'scheduled_seconds' => 50,
+        // One portion: at most this many files and folders, or this many seconds.
+        'portion_files' => 2000,
+        'portion_seconds' => 5,
+        // The checks' own state, findings and quarantine; empty: `storage/app/larena/integrity` (outside the web root).
+        'state_directory' => env('LARENA_INTEGRITY_STATE_DIRECTORY'),
+        // The admin pages (`/admin/integrity`): the alert bar links here.
+        'admin' => [
+            'enabled' => true,
+            'prefix' => 'admin/integrity',
+            'middleware' => ['web', 'larena-auth.entry', 'larena-auth.admin-required', 'larena-admin.locale'],
+        ],
+    ],
 ];
