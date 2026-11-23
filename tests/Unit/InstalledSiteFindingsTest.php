@@ -169,7 +169,7 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         $artifact = new ArtifactVerificationResult('release.archive', 'sha256:' . str_repeat('d', 64), 'signature:release', $manifest->manifestKey, ArtifactVerificationStatus::Verified, true, true);
         $request = static fn (string $key): UpdateCycleRequest => new UpdateCycleRequest(
             'user:1', 'correlation:' . $key, $key, 'update.plan.release', $manifest, new EntitlementSnapshot('site.entitlement', 'site', ['update.install'], true, true, true),
-            new StaticCapability('update.install', 'larena/update-client'), $artifact,
+            new StaticCapability('update.install', 'larena/update'), $artifact,
             new ArrayLogicalFile('logical:' . $key, $key, new ArrayStorageBlobReference($artifact->checksum, 'fixture', 10, 'application/gzip'), FileVisibility::Internal, FileLifecycleClass::Temporary),
             ReleaseUpdateCycle::STEPS,
         );

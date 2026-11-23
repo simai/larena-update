@@ -76,7 +76,7 @@ $replayRuntime = new GovernedUpdateClientRuntime(
     new InMemoryUpdateExecutionStore(),
 );
 $replayEntitlement = new EntitlementSnapshot('site.entitlement', 'site-fixture', ['update.install'], true, true, true);
-$replayManifest = new UpdateManifest('channel.stable.manifest', 'stable', ['larena/update-client', 'larena/core'], 'signature:manifest', true);
+$replayManifest = new UpdateManifest('channel.stable.manifest', 'stable', ['larena/update', 'larena/core'], 'signature:manifest', true);
 $replayPlanKey = 'update.plan.p'.substr(hash('sha256', $replayManifest->manifestKey.'|'.$replayEntitlement->snapshotKey), 0, 16);
 $replayArtifact = new ArtifactVerificationResult('artifact.fixture', 'sha256:'.str_repeat('c', 64), 'signature:artifact', $replayManifest->manifestKey, ArtifactVerificationStatus::Verified, true, true);
 $replayRequest = new UpdateCycleRequest(
@@ -86,7 +86,7 @@ $replayRequest = new UpdateCycleRequest(
     $replayPlanKey,
     $replayManifest,
     $replayEntitlement,
-    new StaticCapability('update.install', 'larena/update-client'),
+    new StaticCapability('update.install', 'larena/update'),
     $replayArtifact,
     new ArrayLogicalFile('logical:replay', 'replay', new ArrayStorageBlobReference($replayArtifact->checksum, 'fixture', 10, 'application/zip'), FileVisibility::Internal, FileLifecycleClass::Temporary),
     ['apply_fixture'],
@@ -98,7 +98,7 @@ $replaySecond = $replayRuntime->run($replayRequest);
 g48_replay_assert($replayFirst === $replaySecond && $replaySecond->state === UpdateCycleState::Completed, 'Idempotent replay must return the persisted result.');
 g48_replay_assert($replayCalls === [$replayScope->calls, $replayOperations->calls, $replayRecovery->prepareCalls, count($replayAudit->events())], 'Idempotent replay must not repeat any side effect.');
 
-$reorderedManifest = new UpdateManifest('channel.stable.manifest', 'stable', ['larena/core', 'larena/update-client'], 'signature:manifest', true);
+$reorderedManifest = new UpdateManifest('channel.stable.manifest', 'stable', ['larena/core', 'larena/update'], 'signature:manifest', true);
 $replayPlanA = $replayRuntime->computePlan($replayManifest, $replayEntitlement);
 $replayPlanB = $replayRuntime->computePlan($reorderedManifest, $replayEntitlement);
 g48_replay_assert($replayPlanA->planKey === $replayPlanB->planKey, 'Equivalent manifest ordering must keep plan identity.');

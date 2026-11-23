@@ -28,7 +28,7 @@ final readonly class IntegrityAccessOperationRegistrar
         return array_map(
             static fn (string $operation): AccessOperationDescriptor => new AccessOperationDescriptor(
                 code: 'update.integrity.' . $operation,
-                ownerPackage: 'larena/update-client',
+                ownerPackage: 'larena/update',
                 labelKey: 'larena-update-client::integrity.operations.' . $operation,
                 target: 'update.integrity:system',
                 requiredGrant: $operation,

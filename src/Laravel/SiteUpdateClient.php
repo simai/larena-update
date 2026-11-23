@@ -253,7 +253,7 @@ final readonly class SiteUpdateClient
             new UpdateManifest($manifestKey, $release->channel, array_keys($release->packages), $signatureRef, true),
             new EntitlementSnapshot('update.open_channel', is_string($host) && $host !== '' ? $host : 'site', ['update.install'], true, true, true,
                 signingKeyId: $release->keyId, signatureValue: 'sha256:' . $release->releaseSha256),
-            new StaticCapability('update.install', 'larena/update-client'),
+            new StaticCapability('update.install', 'larena/update'),
             new ArtifactVerificationResult('release.archive', $checksum, $signatureRef, $manifestKey, ArtifactVerificationStatus::Verified, true, true),
             new ArrayLogicalFile(
                 'logical:update:' . $release->version, 'update-' . $release->version,

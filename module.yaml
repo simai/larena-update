@@ -1,5 +1,5 @@
-package: larena/update-client
-title: Larena Update Client
+package: larena/update
+title: Larena Update
 status: g4_8_local_fixture_runtime
 cluster: update-delivery
 batch: g4-8-update-ownership-reconciliation

@@ -1,6 +1,6 @@
 {
-  "name": "larena/update-client",
-  "description": "Larena Update Client: installed-site trust, planning, preflight, execution, rollback and retry boundary for Larena updates.",
+  "name": "larena/update",
+  "description": "Larena Update: installed-site trust, planning, preflight, execution, rollback and retry boundary for Larena updates.",
   "type": "library",
   "license": "Apache-2.0",
   "authors": [

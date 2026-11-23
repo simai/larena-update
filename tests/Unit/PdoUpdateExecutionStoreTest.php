@@ -74,12 +74,12 @@ try {
         new PdoStoreRecovery(), new RecordingUpdateLifecycleAudit(), new PdoUpdateExecutionStore(new PDO('sqlite:'.$pdoFile)),
     );
     $entitlement = new EntitlementSnapshot('site.entitlement', 'site-fixture', ['update.install'], true, true, true);
-    $manifest = new UpdateManifest('channel.stable.manifest', 'stable', ['larena/update-client', 'larena/core'], 'signature:manifest', true);
+    $manifest = new UpdateManifest('channel.stable.manifest', 'stable', ['larena/update', 'larena/core'], 'signature:manifest', true);
     $planKey = 'update.plan.p'.substr(hash('sha256', $manifest->manifestKey.'|'.$entitlement->snapshotKey), 0, 16);
     $artifact = new ArtifactVerificationResult('artifact.fixture', 'sha256:'.str_repeat('d', 64), 'signature:artifact', $manifest->manifestKey, ArtifactVerificationStatus::Verified, true, true);
     $request = static fn (string $key): UpdateCycleRequest => new UpdateCycleRequest(
         'user:1', 'correlation:pdo:store', $key, $planKey, $manifest, $entitlement,
-        new StaticCapability('update.install', 'larena/update-client'), $artifact,
+        new StaticCapability('update.install', 'larena/update'), $artifact,
         new ArrayLogicalFile('logical:pdo', 'pdo', new ArrayStorageBlobReference($artifact->checksum, 'fixture', 10, 'application/gzip'), FileVisibility::Internal, FileLifecycleClass::Temporary),
         ['apply_fixture', 'migrate_fixture'],
     );

@@ -111,7 +111,7 @@ $manifest = new UpdateManifest('channel.stable.manifest', 'stable', ['larena/cor
 $artifact = new ArtifactVerificationResult('artifact.fixture', 'sha256:' . str_repeat('d', 64), 'signature:artifact', $manifest->manifestKey, ArtifactVerificationStatus::Verified, true, true);
 $request = static fn (string $key, ?array $steps = null): UpdateCycleRequest => new UpdateCycleRequest(
     'user:1', 'correlation:update:cycle', $key, 'update.plan.release', $manifest, $entitlement,
-    new StaticCapability('update.install', 'larena/update-client'), $artifact,
+    new StaticCapability('update.install', 'larena/update'), $artifact,
     new ArrayLogicalFile('logical:cycle', 'cycle', new ArrayStorageBlobReference($artifact->checksum, 'fixture', 10, 'application/gzip'), FileVisibility::Internal, FileLifecycleClass::Temporary),
     $steps ?? ReleaseUpdateCycle::STEPS,
 );

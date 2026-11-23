@@ -1,6 +1,6 @@
 {
   "schema": "larena.package_launch_context.v1",
-  "package": "larena/update-client",
+  "package": "larena/update",
   "launch_record_ref": "specs/project-management/larena-g4-8-update-ownership-reconciliation-launch.json",
   "specs_repo": "simai/larena-specs",
   "specs_commit": "0f6ef486058725254676a98d4c6a9a9656f711fc",
@@ -142,7 +142,11 @@
     "tests/Unit/IntegritySiteTest.php",
     "src/Laravel/Integrity/IntegrityAccessOperationRegistrar.php",
     "tests/Unit/IntegrityAccessOperationsTest.php",
-    "tests/Unit/SiteKeyAndProductTest.php"
+    "tests/Unit/SiteKeyAndProductTest.php",
+    ".env.example",
+    ".larena/spec-ref.json",
+    "database/migrations/2026_11_24_000001_move_access_operations_to_the_update_package.php",
+    "tests/Unit/AccessOwnerMigrationTest.php"
   ],
   "forbidden_files": [
     "resources/*",

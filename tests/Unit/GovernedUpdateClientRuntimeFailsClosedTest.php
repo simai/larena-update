@@ -152,7 +152,7 @@ function g48_negative_fixture(
         $planKey,
         $manifestValue,
         $entitlement,
-        new StaticCapability('update.install', 'larena/update-client'),
+        new StaticCapability('update.install', 'larena/update'),
         $artifactValue,
         $file,
         ['apply_fixture'],

@@ -27,7 +27,7 @@ final readonly class IntegrityAuditEventDescriptor implements AuditEventDescript
 
     public function sourcePackage(): string
     {
-        return 'larena/update-client';
+        return 'larena/update';
     }
 
     public function category(): string

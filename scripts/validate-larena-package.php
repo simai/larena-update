@@ -30,8 +30,8 @@ $launchContext = is_file('.larena/launch-context.json')
 if (($specRef['canonical_update_allowed'] ?? null) !== false) {
     $errors[] = '.larena/spec-ref.json must keep canonical_update_allowed=false';
 }
-if (($launchContext['package'] ?? null) !== 'larena/update-client') {
-    $errors[] = '.larena/launch-context.json package must be larena/update-client';
+if (($launchContext['package'] ?? null) !== 'larena/update') {
+    $errors[] = '.larena/launch-context.json package must be larena/update';
 }
 if (!str_starts_with((string) ($launchContext['evidence_path'] ?? ''), 'docs/project-management/evidence/')) {
     $errors[] = 'launch-context evidence_path must start with docs/project-management/evidence/';
@@ -130,5 +130,5 @@ if ($errors !== []) {
     exit(1);
 }
 echo $codingStarted
-    ? "Larena Update Client sealed launch context is valid.\n"
-    : "Larena Update Client clean pre-codegen baseline is valid.\n";
+    ? "Larena Update sealed launch context is valid.\n"
+    : "Larena Update clean pre-codegen baseline is valid.\n";

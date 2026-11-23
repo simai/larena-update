@@ -1,4 +1,4 @@
-# Larena Update Client
+# Larena Update
 
 Installed-site trust and safety boundary for consuming signed update data,
 calculating plans, verifying artifacts, coordinating preflight and rollback, and
@@ -6,8 +6,13 @@ running ordered restart-aware update steps.
 
 ## Canonical ownership
 
-`larena/update-client` owns the local update lifecycle. `larena/update` remains
-the server-side catalog, signed-manifest and artifact-delivery authority.
+`larena/update` owns the local update lifecycle of an installed site. The
+server-side catalog, signed-manifest and artifact-delivery authority lives in
+`simai/larena-server-update` (registration in `simai/larena-server-registration`).
+This package was named `larena/update-client` until 2026-11-24; its PHP
+namespace `Larena\UpdateClient\`, the configuration key `update-client`, the
+view and translation namespace `larena-update-client::` and the route names
+`larena.update-client.*` keep that name.
 Access, Core, Filesystem, Licensing, Backup and Audit retain their own
 cross-package contracts; an application Root only composes adapters.
 

@@ -132,7 +132,7 @@ $positiveEntitlement = new EntitlementSnapshot(
 $positiveManifest = new UpdateManifest(
     'channel.stable.manifest',
     'stable',
-    ['larena/update-client', 'larena/core'],
+    ['larena/update', 'larena/core'],
     'signature:manifest',
     true,
 );
@@ -160,7 +160,7 @@ $positiveRequest = new UpdateCycleRequest(
     $positivePlanKey,
     $positiveManifest,
     $positiveEntitlement,
-    new StaticCapability('update.install', 'larena/update-client'),
+    new StaticCapability('update.install', 'larena/update'),
     $positiveArtifact,
     $positiveFile,
     ['stage_files', 'migrate_database', 'finalize'],

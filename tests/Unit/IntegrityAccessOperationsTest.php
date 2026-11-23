@@ -23,10 +23,10 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
 
     $read = $registry->get(IntegrityAccessOperationRegistrar::READ);
     $apply = $registry->get(IntegrityAccessOperationRegistrar::APPLY);
-    Kit::check($read?->toArray() === ['code' => 'update.integrity.read', 'owner_package' => 'larena/update-client',
+    Kit::check($read?->toArray() === ['code' => 'update.integrity.read', 'owner_package' => 'larena/update',
         'label_key' => 'larena-update-client::integrity.operations.read', 'target' => 'update.integrity:system',
         'required_grant' => 'read', 'risk' => 'normal', 'audit_denials' => true], 'reading is a normal right of the update client');
-    Kit::check($apply?->toArray() === ['code' => 'update.integrity.apply', 'owner_package' => 'larena/update-client',
+    Kit::check($apply?->toArray() === ['code' => 'update.integrity.apply', 'owner_package' => 'larena/update',
         'label_key' => 'larena-update-client::integrity.operations.apply', 'target' => 'update.integrity:system',
         'required_grant' => 'apply', 'risk' => 'critical', 'audit_denials' => true], 'acting is a critical right of the update client');
 

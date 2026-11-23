@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-// Larena Update Client (plan docs/architecture/2026-11-17-update-client-plan.md in larena-specs).
+// Larena Update (plan docs/architecture/2026-11-17-update-client-plan.md in larena-specs).
 return [
     // `<site>` of the release layout (`<site>/releases/<release>`, `<site>/current`, shared `.env` and `storage`).
     // Empty: two levels above the running release.

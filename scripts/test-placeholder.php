@@ -23,4 +23,4 @@ foreach ($tests as $test) {
     require $test;
 }
 
-echo 'Larena Update Client contract tests passed: ' . count($tests) . " file(s).\n";
+echo 'Larena Update contract tests passed: ' . count($tests) . " file(s).\n";

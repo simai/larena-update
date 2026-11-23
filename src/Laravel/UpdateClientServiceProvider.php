@@ -134,7 +134,7 @@ final class UpdateClientServiceProvider extends ServiceProvider
         // The alert bar of the admin, where the admin has one (owner decision 2026-11-05).
         if (interface_exists(\Larena\Admin\Contracts\AdminAlertSource::class) && class_exists(\Larena\Admin\Alerts\AdminAlerts::class)) {
             $this->callAfterResolving(\Larena\Admin\Alerts\AdminAlerts::class, static function (\Larena\Admin\Alerts\AdminAlerts $alerts, Application $app): void {
-                $alerts->register('larena/update-client:integrity', new \Larena\UpdateClient\Laravel\Integrity\IntegrityAdminAlertSource(
+                $alerts->register('larena/update:integrity', new \Larena\UpdateClient\Laravel\Integrity\IntegrityAdminAlertSource(
                     $app->make(SiteIntegrity::class), $app->make('translator'), self::allows($app)));
             });
         }

@@ -1,7 +1,7 @@
 version = 1
-SPDX-PackageName = "Larena Update Client"
+SPDX-PackageName = "Larena Update"
 SPDX-PackageSupplier = "Rim Zabarov <rim@zabarov.com>"
-SPDX-PackageDownloadLocation = "https://github.com/simai/larena-update-client"
+SPDX-PackageDownloadLocation = "https://github.com/simai/larena-update"
 
 [[annotations]]
 path = "**"
