@@ -134,11 +134,11 @@ final class UpdateClientTestKit
      *
      * @return array{0:string,1:string,2:string}
      */
-    public static function release(string $version, string $secretKey, string $keyId = 'release.test', ?string $archive = null, string $minimum = '1.0.0'): array
+    public static function release(string $version, string $secretKey, string $keyId = 'release.test', ?string $archive = null, string $minimum = '1.0.0', string $product = 'larena'): array
     {
         $archive ??= self::tar($version);
         $bytes = (string) json_encode([
-            'schema' => 'larena.release', 'schema_version' => 1, 'product' => 'larena', 'version' => $version, 'channel' => 'stable',
+            'schema' => 'larena.release', 'schema_version' => 1, 'product' => $product, 'version' => $version, 'channel' => 'stable',
             'minimum_version' => $minimum, 'php' => '^8.3',
             'archive' => ['file' => 'larena-' . $version . '.tar.gz', 'sha256' => hash('sha256', $archive), 'bytes' => strlen($archive)],
             'packages' => ['larena/core' => str_repeat('a', 40)], 'backward_incompatible_migrations' => false,

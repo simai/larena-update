@@ -21,6 +21,17 @@ return [
     // Release tag = prefix + version (`v1.3.0`).
     'tag_prefix' => 'v',
 
+    // The product this site runs: a release is taken only when its signed `release.json` names the same product
+    // (`larena` for a Larena site, `larena-panel` for Larena Panel).
+    'product' => env('LARENA_UPDATE_PRODUCT', 'larena'),
+
+    /*
+     * The site key from the update server, sent as `Authorization: Bearer <key>` with every request to an update
+     * source (not to github.com, whose public releases need no key). It stays in `.env`: never in an address, a log,
+     * an error or a page. Empty: requests go without it.
+     */
+    'site_key' => env('LARENA_UPDATE_SITE_KEY'),
+
     /*
      * Public Ed25519 keys that may sign `release.json`: key id => base64 of the 32-byte public key. Public keys only;
      * the private key never enters a repository. The keys the distribution ships come from the site's

@@ -146,6 +146,21 @@ final readonly class SiteUpdateClient
         return new PdoUpdateExecutionStore(($this->database)(), $this->reconnect);
     }
 
+    /** The product a release must name (`product`, `LARENA_UPDATE_PRODUCT`): `larena` unless set, `larena-panel` for the panel. */
+    public function product(): string
+    {
+        return self::productOf($this->config);
+    }
+
+    /** @param array<array-key,mixed> $config the `update-client` configuration */
+    public static function productOf(array $config): string
+    {
+        $product = $config['product'] ?? null;
+        $product = is_string($product) && trim($product) !== '' ? trim($product) : 'larena';
+
+        return preg_match('/\A[a-z0-9][a-z0-9._\/-]{0,99}\z/D', $product) === 1 ? $product : throw new RuntimeException('update_product_invalid');
+    }
+
     public function verifier(): ReleaseSignatureVerifier
     {
         $keys = $this->config['trusted_keys'] ?? [];
@@ -154,6 +169,7 @@ final readonly class SiteUpdateClient
         return new ReleaseSignatureVerifier(
             is_array($keys) ? $keys : [],
             is_array($revoked) ? array_values(array_filter($revoked, 'is_string')) : [],
+            $this->product(),
         );
     }
 
@@ -171,6 +187,7 @@ final readonly class SiteUpdateClient
             self::int($download['connect_timeout'] ?? null, 15),
             self::int($download['max_archive_bytes'] ?? null, 1073741824),
             is_string($this->config['tag_prefix'] ?? null) ? $this->config['tag_prefix'] : 'v',
+            is_string($this->config['site_key'] ?? null) ? $this->config['site_key'] : null,
         );
     }
 

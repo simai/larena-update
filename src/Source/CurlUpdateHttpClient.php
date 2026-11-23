@@ -56,6 +56,8 @@ final readonly class CurlUpdateHttpClient implements UpdateHttpClient
             CURLOPT_CONNECTTIMEOUT => $request->connectTimeoutSeconds,
             CURLOPT_FOLLOWLOCATION => $request->followRedirects,
             CURLOPT_MAXREDIRS => 5,
+            // An `Authorization` header (the site key) never follows a redirect to another host.
+            CURLOPT_UNRESTRICTED_AUTH => false,
             CURLOPT_PROTOCOLS => $protocols,
             CURLOPT_REDIR_PROTOCOLS => $protocols,
             CURLOPT_SSL_VERIFYPEER => $request->verifyTls,

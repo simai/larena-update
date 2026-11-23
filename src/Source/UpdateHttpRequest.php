@@ -17,7 +17,7 @@ final readonly class UpdateHttpRequest
     public function __construct(
         public string $method,
         public string $url,
-        public array $headers = [],
+        #[\SensitiveParameter] public array $headers = [],
         public int $timeoutSeconds = 10,
         public int $maxBytes = 1048576,
         public ?string $sinkPath = null,

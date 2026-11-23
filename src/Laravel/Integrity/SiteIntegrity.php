@@ -41,6 +41,7 @@ final class SiteIntegrity
         private readonly array $trustedKeys,
         private readonly array $revokedKeyIds,
         public readonly IntegrityHistory $history,
+        private readonly string $product = 'larena',
     ) {
     }
 
@@ -53,7 +54,7 @@ final class SiteIntegrity
             $this->baseline = null;
             $this->unavailable = null;
             try {
-                $this->baseline = SignedBaseline::load($this->layout, $this->trustedKeys, $this->revokedKeyIds);
+                $this->baseline = SignedBaseline::load($this->layout, $this->trustedKeys, $this->revokedKeyIds, $this->product);
             } catch (IntegrityUnavailable $unavailable) {
                 $this->unavailable = $unavailable;
             }

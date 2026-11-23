@@ -99,7 +99,7 @@ final class UpdateClientServiceProvider extends ServiceProvider
                 IntegrityLayout::sourceInstallMarked($config->get('update-client.integrity.source_install')),
             );
 
-            return new SiteIntegrity($layout, self::trustedKeys($config), self::revokedKeys($config), $app->make(IntegrityHistory::class));
+            return new SiteIntegrity($layout, self::trustedKeys($config), self::revokedKeys($config), $app->make(IntegrityHistory::class), self::product($config));
         });
         $this->app->singletonIf(IntegrityHistory::class, static fn (Application $app): IntegrityHistory => new AuditIntegrityHistory(
             $app->make(LoggerInterface::class),
@@ -116,7 +116,8 @@ final class UpdateClientServiceProvider extends ServiceProvider
         if (interface_exists(\Larena\Core\Contracts\InstalledReleaseSeal::class)) {
             $this->app->bind(\Larena\Core\Contracts\InstalledReleaseSeal::class, static fn (Application $app): \Larena\Core\Contracts\InstalledReleaseSeal
                 => new \Larena\UpdateClient\Laravel\Integrity\SiteInstalledReleaseSeal(new ReleaseSealer(
-                    self::trustedKeys($app->make(ConfigRepository::class)), self::revokedKeys($app->make(ConfigRepository::class)))));
+                    self::trustedKeys($app->make(ConfigRepository::class)), self::revokedKeys($app->make(ConfigRepository::class)),
+                    product: self::product($app->make(ConfigRepository::class)))));
         }
         if (class_exists(\Larena\Queue\Runtime\JobTypeRegistry::class)) {
             $this->app->afterResolving(\Larena\Queue\Runtime\JobTypeRegistry::class, static function (\Larena\Queue\Runtime\JobTypeRegistry $registry, Application $app): void {
@@ -167,6 +168,16 @@ final class UpdateClientServiceProvider extends ServiceProvider
         }
 
         return array_filter(is_array($keys) ? $keys : [], static fn (mixed $key, mixed $id): bool => is_string($id) && is_string($key), ARRAY_FILTER_USE_BOTH);
+    }
+
+    /** The configured product (`LARENA_UPDATE_PRODUCT`); a malformed one checks against `larena`, which no other product's release names. */
+    private static function product(ConfigRepository $config): string
+    {
+        try {
+            return SiteUpdateClient::productOf((array) $config->get('update-client', []));
+        } catch (\Throwable) {
+            return 'larena';
+        }
     }
 
     /** @return list<string> */

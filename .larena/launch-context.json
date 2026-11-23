@@ -141,7 +141,8 @@
     "tests/Unit/IntegrityChecksTest.php",
     "tests/Unit/IntegritySiteTest.php",
     "src/Laravel/Integrity/IntegrityAccessOperationRegistrar.php",
-    "tests/Unit/IntegrityAccessOperationsTest.php"
+    "tests/Unit/IntegrityAccessOperationsTest.php",
+    "tests/Unit/SiteKeyAndProductTest.php"
   ],
   "forbidden_files": [
     "resources/*",

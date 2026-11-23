@@ -46,6 +46,13 @@ distribution lists its public keys in the site's `config/larena-release-keys.php
 Sources (`LARENA_UPDATE_SOURCES`, in order) are HTTPS release pages or local
 folders `file:///path` with the layout the release step writes
 (`download/v<version>/release.json`, `release.json.sig`, `files.json`, the archive).
+`LARENA_UPDATE_SITE_KEY` (the site key from the update server) is sent as
+`Authorization: Bearer <key>` to every HTTPS source except github.com; it never
+goes into an address, a log or an error, and without it requests go as before.
+`ReleaseSource::entitlement()` asks `GET <source>/entitlement` with the same
+header and returns the raw answer (only `schema_version` 1 is checked).
+`LARENA_UPDATE_PRODUCT` (default `larena`; `larena-panel` for the panel) is the
+`product` a signed `release.json` must name, for updates and integrity checks.
 `files.json` (schema `larena.release-files`) lists every path of the release
 with its type, size and sha256, plus `core_files` (entry point, loader, config,
 `.htaccess`); `release.json` names its size and sha256, so the one signature

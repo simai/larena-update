@@ -28,6 +28,7 @@ final readonly class ReleaseSealer
         private array $trustedKeys,
         private array $revokedKeyIds = [],
         private ReleaseArchiveExtractor $extractor = new ReleaseArchiveExtractor(),
+        private string $product = 'larena',
     ) {
     }
 
@@ -44,7 +45,7 @@ final readonly class ReleaseSealer
         }
         $releaseBytes = self::read($from . '/release.json');
         $signatureBytes = self::read($from . '/release.json.sig');
-        $release = (new ReleaseSignatureVerifier($this->trustedKeys, $this->revokedKeyIds))->verifyKept($releaseBytes, $signatureBytes);
+        $release = (new ReleaseSignatureVerifier($this->trustedKeys, $this->revokedKeyIds, $this->product))->verifyKept($releaseBytes, $signatureBytes);
         if ($release->files === null) {
             throw new RuntimeException('release_files_not_signed');
         }

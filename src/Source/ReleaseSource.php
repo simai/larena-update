@@ -33,17 +33,25 @@ use Throwable;
  * against `release.json` and in itself; it lies next to the archive, where the cycle reads it. A source
  * that fails (network, status, signature, content) is skipped for the next one; the reasons stay in
  * {@see errors()}. Every failure is a RuntimeException with a stable reason code.
+ *
+ * The site key (`site_key`, `LARENA_UPDATE_SITE_KEY` in `.env`) goes as `Authorization: Bearer <key>` with every
+ * request to an HTTPS source except github.com, whose public releases need none and must not see it. It is never put
+ * into an address, a reason code or {@see errors()}; a request with a key does not carry it across a redirect to
+ * another host. Without a key requests go as before. {@see entitlement()} asks a source for the site's entitlement.
  */
 final class ReleaseSource
 {
     private const MAX_DESCRIPTION_BYTES = 262144;
     private const MAX_SIGNATURE_BYTES = 4096;
+    private const MAX_ENTITLEMENT_BYTES = 65536;
 
     /** @var list<string> */
     private array $sources;
 
     /** @var array<string,string> source => reason code of its last failure */
     private array $errors = [];
+
+    private ?string $siteKey;
 
     /** @param array<array-key,mixed> $sources HTTPS addresses from the configuration, in order */
     public function __construct(
@@ -55,7 +63,14 @@ final class ReleaseSource
         private readonly int $connectTimeoutSeconds = 15,
         private readonly int $maxArchiveBytes = 1073741824,
         private readonly string $tagPrefix = 'v',
+        #[\SensitiveParameter] ?string $siteKey = null,
     ) {
+        $siteKey = $siteKey === null ? '' : trim($siteKey);
+        // A bearer token: visible ASCII only, so it can never break the header or the request line.
+        if ($siteKey !== '' && preg_match('/\A[\x21-\x7e]{1,4096}\z/D', $siteKey) !== 1) {
+            throw new RuntimeException('update_site_key_invalid');
+        }
+        $this->siteKey = $siteKey === '' ? null : $siteKey;
         $valid = [];
         foreach ($sources as $source) {
             $source = is_string($source) ? rtrim(trim($source), '/') : '';
@@ -95,7 +110,7 @@ final class ReleaseSource
         $this->errors = [];
         foreach ($this->sources as $source) {
             try {
-                [$bytes, $signature] = $this->description($this->latestBase($source));
+                [$bytes, $signature] = $this->description($source, $this->latestBase($source));
                 $release = $this->verifier->verify($bytes, $signature, $installedVersion, $channel);
 
                 return new SourceRelease($source, $release);
@@ -129,6 +144,48 @@ final class ReleaseSource
         throw new RuntimeException((string) reset($this->errors));
     }
 
+    /**
+     * The site's entitlement as the first answering HTTPS source gives it at `GET <source>/entitlement`, with the
+     * site key. Returned as the raw answer: only checked to be a JSON object with `schema_version` 1; reading the
+     * `larena.entitlement` format is left to its owner. Folder sources and github.com have no entitlement.
+     */
+    public function entitlement(): string
+    {
+        $this->errors = [];
+        foreach ($this->sources as $source) {
+            if (self::folder($source) !== null || self::isGitHub($source)) {
+                continue;
+            }
+            try {
+                $response = $this->http->send(new UpdateHttpRequest(
+                    'GET', $source . '/entitlement', $this->headers($source), timeoutSeconds: min(60, $this->timeoutSeconds),
+                    maxBytes: self::MAX_ENTITLEMENT_BYTES, connectTimeoutSeconds: $this->connectTimeoutSeconds,
+                ));
+                if (!$response->successful()) {
+                    throw new RuntimeException(match ($response->status) {
+                        401, 403 => 'update_entitlement_refused',
+                        404 => 'update_entitlement_not_found',
+                        default => 'update_entitlement_failed',
+                    });
+                }
+                try {
+                    $answer = json_decode($response->body, true, 64, JSON_THROW_ON_ERROR);
+                } catch (\JsonException) {
+                    $answer = null;
+                }
+                if (!is_array($answer) || array_is_list($answer) || ($answer['schema_version'] ?? null) !== 1) {
+                    throw new RuntimeException('update_entitlement_invalid');
+                }
+
+                return $response->body;
+            } catch (Throwable $exception) {
+                $this->errors[$source] = self::reason($exception, 'update_entitlement_failed');
+            }
+        }
+
+        throw new RuntimeException($this->errors === [] ? 'update_entitlement_source_missing' : (string) reset($this->errors));
+    }
+
     /** Removes the download folder of one version (after the cycle took the archive in). */
     public function forget(string $version): void
     {
@@ -141,7 +198,7 @@ final class ReleaseSource
         $base = $folder !== null
             ? $folder . '/download/' . $this->tagPrefix . $version . '/'
             : $source . '/download/' . rawurlencode($this->tagPrefix . $version) . '/';
-        [$bytes, $signature] = $this->description($base);
+        [$bytes, $signature] = $this->description($source, $base);
         $release = $this->verifier->verify($bytes, $signature, $installedVersion, $channel);
         if ($release->version !== $version) {
             throw new RuntimeException('update_release_version_differs');
@@ -159,7 +216,7 @@ final class ReleaseSource
             // before the archive is requested. An older release without `files` has no list (files null).
             $list = $folder !== null
                 ? self::readFile($base . $release->files->file, $release->files->bytes)
-                : $this->fetch($base . rawurlencode($release->files->file), $release->files->bytes);
+                : $this->fetch($source, $base . rawurlencode($release->files->file), $release->files->bytes);
             FileList::forRelease($release, $list);
             $written[$release->files->file] = $list;
         }
@@ -174,7 +231,7 @@ final class ReleaseSource
                 $this->copyArchive($base . $release->archiveFile, $archive, $release->archiveBytes);
             } else {
                 $response = $this->http->send(new UpdateHttpRequest(
-                    'GET', $base . rawurlencode($release->archiveFile), timeoutSeconds: $this->timeoutSeconds,
+                    'GET', $base . rawurlencode($release->archiveFile), $this->headers($source), timeoutSeconds: $this->timeoutSeconds,
                     maxBytes: $release->archiveBytes, sinkPath: $archive, followRedirects: true,
                     connectTimeoutSeconds: $this->connectTimeoutSeconds,
                 ));
@@ -194,10 +251,10 @@ final class ReleaseSource
         return new DownloadedRelease($source, $release, $bytes, $signature, $archive);
     }
 
-    private function fetch(string $url, int $limit): string
+    private function fetch(string $source, string $url, int $limit): string
     {
         $response = $this->http->send(new UpdateHttpRequest(
-            'GET', $url, timeoutSeconds: min(120, $this->timeoutSeconds), maxBytes: $limit,
+            'GET', $url, $this->headers($source), timeoutSeconds: min(120, $this->timeoutSeconds), maxBytes: $limit,
             followRedirects: true, connectTimeoutSeconds: $this->connectTimeoutSeconds,
         ));
         if (!$response->successful()) {
@@ -208,7 +265,7 @@ final class ReleaseSource
     }
 
     /** @return array{0:string,1:string} release.json bytes, release.json.sig bytes */
-    private function description(string $base): array
+    private function description(string $source, string $base): array
     {
         $files = [];
         foreach (['release.json' => self::MAX_DESCRIPTION_BYTES, 'release.json.sig' => self::MAX_SIGNATURE_BYTES] as $name => $limit) {
@@ -217,7 +274,7 @@ final class ReleaseSource
                 continue;
             }
             $response = $this->http->send(new UpdateHttpRequest(
-                'GET', $base . $name, timeoutSeconds: min(60, $this->timeoutSeconds), maxBytes: $limit,
+                'GET', $base . $name, $this->headers($source), timeoutSeconds: min(60, $this->timeoutSeconds), maxBytes: $limit,
                 followRedirects: true, connectTimeoutSeconds: $this->connectTimeoutSeconds,
             ));
             if (!$response->successful()) {
@@ -254,6 +311,21 @@ final class ReleaseSource
         }
 
         return $folder . '/download/' . $this->tagPrefix . $newest . '/';
+    }
+
+    /** @return array<string,string> the site key header for an HTTPS source other than github.com, else none */
+    private function headers(string $source): array
+    {
+        return $this->siteKey === null || self::folder($source) !== null || self::isGitHub($source)
+            ? []
+            : ['Authorization' => 'Bearer ' . $this->siteKey];
+    }
+
+    private static function isGitHub(string $source): bool
+    {
+        $host = strtolower((string) parse_url($source, PHP_URL_HOST));
+
+        return $host === 'github.com' || str_ends_with($host, '.github.com');
     }
 
     /** The absolute folder of a `file:///…` source, or null for an address. */

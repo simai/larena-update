@@ -33,7 +33,7 @@ final readonly class SignedBaseline
      *
      * @throws IntegrityUnavailable
      */
-    public static function load(IntegrityLayout $layout, array $trustedKeys, array $revokedKeyIds = []): self
+    public static function load(IntegrityLayout $layout, array $trustedKeys, array $revokedKeyIds = [], string $product = 'larena'): self
     {
         $directory = $layout->signedDirectory();
         $fingerprint = self::fingerprint($layout);
@@ -53,7 +53,7 @@ final readonly class SignedBaseline
             throw new IntegrityUnavailable('integrity_keys_missing');
         }
         try {
-            $verifier = new ReleaseSignatureVerifier($trustedKeys, $revokedKeyIds);
+            $verifier = new ReleaseSignatureVerifier($trustedKeys, $revokedKeyIds, $product);
             $release = $verifier->verifyKept($bytes['release.json'], $bytes['release.json.sig']);
             if ($release->files === null || $release->files->file !== FileList::FILE) {
                 throw new RuntimeException('release_files_not_signed');
