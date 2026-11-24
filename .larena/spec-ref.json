@@ -2,10 +2,10 @@
   "schema": "larena.package_specs_reference.v1",
   "package": "larena/update",
   "specs_repo": "simai/larena-specs",
-  "specs_commit": "757a99ffaa351db55b29bb9ac6d7eb4a18d8e23c",
-  "package_spec": "specs/packages/update-client/package.json",
-  "package_dna": "specs/packages/update-client/dna.json",
-  "features_index": "specs/packages/update-client/features.json",
+  "specs_commit": "bd3259d057af31999c8d1594535f772f431dfa15",
+  "package_spec": "specs/packages/update/package.json",
+  "package_dna": "specs/packages/update/dna.json",
+  "features_index": "specs/packages/update/features.json",
   "canonical_update_allowed": false,
   "graph_sync_proposal_required": true
 }
