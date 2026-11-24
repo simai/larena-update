@@ -38,12 +38,12 @@ return [
      * `config/larena-release-keys.php` (same format) and are added to these. No key at all means every release is
      * refused.
      *
-     * Example (not a real key):
-     *     'trusted_keys' => [
-     *         'larena-release-2026' => 'MCowBQYDK2VwAyEA...base64 of 32 bytes...=',
-     *     ],
+     * A site or a test stand adds its own keys in `.env`, without editing any file:
+     *     LARENA_UPDATE_TRUSTED_KEYS=id=base64,id2=base64
+     * Read strictly ({@see \Larena\UpdateClient\Release\TrustedKeyList}): a malformed pair, or a value that is not
+     * base64 of exactly 32 bytes, is left out; values are never logged. `revoked_key_ids` still win.
      */
-    'trusted_keys' => [],
+    'trusted_keys' => \Larena\UpdateClient\Release\TrustedKeyList::parse(env('LARENA_UPDATE_TRUSTED_KEYS')),
 
     // Key ids no longer trusted even when listed above.
     'revoked_key_ids' => [],

@@ -12,7 +12,8 @@ use Throwable;
 
 /**
  * Shared output of the update commands: `--json` prints the payload, otherwise the command's own readable lines.
- * A failure prints only its stable reason code, never an exception text or a path.
+ * A failure prints only its stable reason code, never an exception text or a path, and the words for that code in the
+ * site's language when the package has them ({@see explain()}).
  */
 abstract class UpdateCommand extends Command
 {
@@ -33,8 +34,13 @@ abstract class UpdateCommand extends Command
             $this->line((string) json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
         } elseif (($payload['status'] ?? null) === 'failed' && isset($payload['reason']) && !isset($payload['cycle_id'])) {
             $this->error('Failed: ' . $payload['reason'] . '.');
+            if (($text = $this->explain((string) $payload['reason'])) !== null) {
+                $this->error($text);
+            }
             foreach ((array) ($payload['source_errors'] ?? []) as $source => $reason) {
-                $this->line('  ' . $source . ': ' . (is_scalar($reason) ? (string) $reason : ''));
+                $reason = is_scalar($reason) ? (string) $reason : '';
+                $text = $reason === '' ? null : $this->explain($reason);
+                $this->line('  ' . $source . ': ' . $reason . ($text !== null ? ' — ' . $text : ''));
             }
         } else {
             foreach ($lines($payload) as $line) {
@@ -88,6 +94,28 @@ abstract class UpdateCommand extends Command
             'planned', 'execution_ready', 'running' => 'in progress',
             default => $state,
         };
+    }
+
+    /**
+     * The words for a reason code in the site's language (the package's `integrity.reasons`, ru and en), or null when
+     * there are none. Only the code is looked up: no server answer and no key ever reaches the text.
+     */
+    final protected function explain(string $reason): ?string
+    {
+        if (preg_match('/\A[a-z][a-z0-9_]{0,99}\z/D', $reason) !== 1 || !isset($this->laravel) || !$this->laravel->bound('translator')) {
+            return null;
+        }
+        $key = 'larena-update-client::integrity.reasons.' . $reason;
+        try {
+            $text = $this->laravel->make('translator')->get($key);
+        } catch (Throwable) {
+            return null;
+        }
+        if (!is_string($text) || $text === $key || $text === '') {
+            return null;
+        }
+
+        return mb_strtoupper(mb_substr($text, 0, 1)) . mb_substr($text, 1);
     }
 
     final protected static function reason(Throwable $exception): string

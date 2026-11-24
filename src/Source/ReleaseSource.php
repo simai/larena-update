@@ -38,12 +38,18 @@ use Throwable;
  * request to an HTTPS source except github.com, whose public releases need none and must not see it. It is never put
  * into an address, a reason code or {@see errors()}; a request with a key does not carry it across a redirect to
  * another host. Without a key requests go as before. {@see entitlement()} asks a source for the site's entitlement.
+ *
+ * A refused download names its real reason (auditor msg-68c8decb, 2026-11-24): a 401/403 with the update server's
+ * refusal code becomes `update_license_required`, `update_license_expired`, `update_license_revoked`,
+ * `update_site_key_required` or `update_site_key_rejected` ({@see refusal()}); any other failure stays
+ * `update_download_failed`.
  */
 final class ReleaseSource
 {
     private const MAX_DESCRIPTION_BYTES = 262144;
     private const MAX_SIGNATURE_BYTES = 4096;
     private const MAX_ENTITLEMENT_BYTES = 65536;
+    private const MAX_REFUSAL_BYTES = 4096;
 
     /** @var list<string> */
     private array $sources;
@@ -123,7 +129,7 @@ final class ReleaseSource
             }
         }
 
-        throw new RuntimeException((string) reset($this->errors));
+        throw new RuntimeException($this->failure());
     }
 
     /** Fetches and checks one exact version; see the class description for the order of checks. */
@@ -141,7 +147,7 @@ final class ReleaseSource
             }
         }
 
-        throw new RuntimeException((string) reset($this->errors));
+        throw new RuntimeException($this->failure());
     }
 
     /**
@@ -184,6 +190,21 @@ final class ReleaseSource
         }
 
         throw new RuntimeException($this->errors === [] ? 'update_entitlement_source_missing' : (string) reset($this->errors));
+    }
+
+    /**
+     * The reason the call failed: a licence or site key refusal of any source when there is one (it is what the
+     * owner of the site can act on), else the first source's reason.
+     */
+    private function failure(): string
+    {
+        foreach ($this->errors as $reason) {
+            if (str_starts_with($reason, 'update_license_') || str_starts_with($reason, 'update_site_key_')) {
+                return $reason;
+            }
+        }
+
+        return (string) reset($this->errors);
     }
 
     /** Removes the download folder of one version (after the cycle took the archive in). */
@@ -237,7 +258,7 @@ final class ReleaseSource
                 ));
                 if (!$response->successful()) {
                     ReleaseDirectory::remove($archive);
-                    throw new RuntimeException('update_download_failed');
+                    throw new RuntimeException($this->refusal($source, $response, 'update_download_failed'));
                 }
             }
             try {
@@ -258,7 +279,7 @@ final class ReleaseSource
             followRedirects: true, connectTimeoutSeconds: $this->connectTimeoutSeconds,
         ));
         if (!$response->successful()) {
-            throw new RuntimeException($response->status === 404 ? 'release_files_missing' : 'update_download_failed');
+            throw new RuntimeException($response->status === 404 ? 'release_files_missing' : $this->refusal($source, $response, 'update_download_failed'));
         }
 
         return $response->body;
@@ -278,7 +299,7 @@ final class ReleaseSource
                 followRedirects: true, connectTimeoutSeconds: $this->connectTimeoutSeconds,
             ));
             if (!$response->successful()) {
-                throw new RuntimeException($response->status === 404 ? 'update_release_not_found' : 'update_download_failed');
+                throw new RuntimeException($response->status === 404 ? 'update_release_not_found' : $this->refusal($source, $response, 'update_download_failed'));
             }
             $files[] = $response->body;
         }
@@ -311,6 +332,44 @@ final class ReleaseSource
         }
 
         return $folder . '/download/' . $this->tagPrefix . $newest . '/';
+    }
+
+    /**
+     * The reason of a refused request (401/403) the site can name: the update server's refusal code (`error`, else
+     * `code`, of a JSON object answer) mapped to a stable reason, else `$fallback`.
+     *
+     * - `license_required` (the site has no licence for the product, or the server does not know its key) →
+     *   `update_license_required`; `license_expired` → `update_license_expired`; `license_revoked` →
+     *   `update_license_revoked`;
+     * - 401 or `site_key_required`: without a site key `update_site_key_required`, with one `update_site_key_rejected`.
+     *
+     * Only the code is read, from at most {@see MAX_REFUSAL_BYTES}; the body itself and the key never go into a reason.
+     */
+    private function refusal(string $source, UpdateHttpResponse $response, string $fallback): string
+    {
+        if ($response->status !== 401 && $response->status !== 403) {
+            return $fallback;
+        }
+        $code = null;
+        if ($response->body !== '' && strlen($response->body) <= self::MAX_REFUSAL_BYTES) {
+            try {
+                $answer = json_decode($response->body, true, 8, JSON_THROW_ON_ERROR);
+            } catch (\JsonException) {
+                $answer = null;
+            }
+            if (is_array($answer) && !array_is_list($answer)) {
+                $code = is_string($answer['error'] ?? null) ? $answer['error'] : (is_string($answer['code'] ?? null) ? $answer['code'] : null);
+            }
+        }
+        $keySent = $this->headers($source) !== [];
+
+        return match (true) {
+            $code === 'license_required' => 'update_license_required',
+            $code === 'license_expired' => 'update_license_expired',
+            $code === 'license_revoked' => 'update_license_revoked',
+            $code === 'site_key_required', $response->status === 401 => $keySent ? 'update_site_key_rejected' : 'update_site_key_required',
+            default => $fallback,
+        };
     }
 
     /** @return array<string,string> the site key header for an HTTPS source other than github.com, else none */

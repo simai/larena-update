@@ -210,6 +210,12 @@ return [
         'release_seal_source_invalid' => 'в папке нет подписанных файлов выпуска.',
         'release_trusted_keys_missing' => 'нет ключа для проверки подписи.',
         'release_verification_failed' => 'подпись выпуска не прошла проверку.',
+        'update_license_required' => 'у сервера обновлений нет лицензии для этого сайта: оформите лицензию на сайт или проверьте его ключ.',
+        'update_license_expired' => 'лицензия этого сайта закончилась: продлите её, чтобы получать обновления.',
+        'update_license_revoked' => 'лицензия этого сайта отозвана.',
+        'update_site_key_required' => 'серверу обновлений нужен ключ сайта: укажите LARENA_UPDATE_SITE_KEY в .env.',
+        'update_site_key_rejected' => 'сервер обновлений не принял ключ сайта: проверьте LARENA_UPDATE_SITE_KEY в .env.',
+        'update_download_failed' => 'выпуск не удалось скачать.',
         'other' => 'неизвестная причина.',
     ],
 

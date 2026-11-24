@@ -47,7 +47,15 @@ runs is the `version` in its `.larena-release` marker (written when a release
 is unpacked; the installer must write it for the release it installs), or its
 folder name when that is a version. No release key ships with the package: the
 distribution lists its public keys in the site's `config/larena-release-keys.php`
-(`key id => base64 public key`); `update-client.trusted_keys` may add more.
+(`key id => base64 public key`); `update-client.trusted_keys` may add more, and a
+site or a test stand adds its own in `.env` as
+`LARENA_UPDATE_TRUSTED_KEYS=id=base64,id2=base64` (a malformed pair or a value
+that is not 32 bytes after base64 is ignored; `revoked_key_ids` still win).
+A refused download names its reason: `update_license_required`,
+`update_license_expired`, `update_license_revoked` (the update server's
+`license_*` code), `update_site_key_required` (no site key) or
+`update_site_key_rejected` (a 401 with a key); other failures stay
+`update_download_failed`.
 Sources (`LARENA_UPDATE_SOURCES`, in order) are HTTPS release pages or local
 folders `file:///path` with the layout the release step writes
 (`download/v<version>/release.json`, `release.json.sig`, `files.json`, the archive).

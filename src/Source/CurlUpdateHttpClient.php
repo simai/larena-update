@@ -9,10 +9,13 @@ use RuntimeException;
 /**
  * {@see UpdateHttpClient} over ext-curl. A request that must stay on HTTPS stays on it through every redirect; the
  * body is cut off at the request's byte limit; a download goes to `<file>.part` and is renamed to `<file>` only
- * after the whole body arrived with a 2xx status, so a half-written file never looks like a finished one.
+ * after the whole body arrived with a 2xx status, so a half-written file never looks like a finished one. A download
+ * answered with another status returns at most the first 4 KiB of that answer as its body and keeps no file.
  */
 final readonly class CurlUpdateHttpClient implements UpdateHttpClient
 {
+    private const ERROR_BODY_BYTES = 4096;
+
     public function __construct(private string $userAgent = 'larena-update-client')
     {
     }
@@ -99,6 +102,9 @@ final readonly class CurlUpdateHttpClient implements UpdateHttpClient
         }
         if ($target !== null) {
             if ($status < 200 || $status >= 300) {
+                // A refusal of a download keeps its first bytes as the body, so the caller can read the server's
+                // refusal code (`{"error":"license_required"}`); the file itself is never kept.
+                $body = $this->head($partial);
                 $this->discard($partial);
             } elseif (!rename($partial, $target)) {
                 $this->discard($partial);
@@ -107,6 +113,20 @@ final readonly class CurlUpdateHttpClient implements UpdateHttpClient
         }
 
         return new UpdateHttpResponse($status, $body, $bytes);
+    }
+
+    private function head(?string $path): string
+    {
+        if ($path === null || !is_file($path) || is_link($path)) {
+            return '';
+        }
+        $handle = fopen($path, 'rb');
+        $head = $handle === false ? false : fread($handle, self::ERROR_BODY_BYTES);
+        if ($handle !== false) {
+            fclose($handle);
+        }
+
+        return is_string($head) ? $head : '';
     }
 
     private function discard(?string $path): void

@@ -16,7 +16,7 @@ use Stringable;
 /**
  * Test HTTP client: never opens a connection. Each request is answered by the handler, which returns a response, a
  * status and body pair, or throws (a network failure). A body for a request with a file target is written to that
- * file on a 2xx status, as the real client does.
+ * file on a 2xx status, as the real client does; on another status its first 4 KiB come back as the body.
  */
 final class FakeUpdateHttpClient implements UpdateHttpClient
 {
@@ -45,9 +45,12 @@ final class FakeUpdateHttpClient implements UpdateHttpClient
         if ($request->sinkPath !== null) {
             if ($response->successful()) {
                 file_put_contents($request->sinkPath, $response->body);
+
+                return new UpdateHttpResponse($response->status, '', strlen($response->body));
             }
 
-            return new UpdateHttpResponse($response->status, '', strlen($response->body));
+            // As the real client: a refused download returns the first 4 KiB of the answer, no file.
+            return new UpdateHttpResponse($response->status, substr($response->body, 0, 4096), strlen($response->body));
         }
 
         return $response;

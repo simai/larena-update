@@ -210,6 +210,12 @@ return [
         'release_seal_source_invalid' => 'the folder has no signed release files.',
         'release_trusted_keys_missing' => 'there is no key to check the signature.',
         'release_verification_failed' => 'the release signature did not pass the check.',
+        'update_license_required' => 'the update server has no licence for this site: add the licence to the site in the registration, or check its site key.',
+        'update_license_expired' => 'the licence of this site has expired: renew it to take updates.',
+        'update_license_revoked' => 'the licence of this site was revoked.',
+        'update_site_key_required' => 'the update server needs the site key: set LARENA_UPDATE_SITE_KEY in .env.',
+        'update_site_key_rejected' => 'the update server did not accept the site key: check LARENA_UPDATE_SITE_KEY in .env.',
+        'update_download_failed' => 'the release could not be downloaded.',
         'other' => 'unknown reason.',
     ],
 
