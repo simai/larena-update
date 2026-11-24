@@ -142,7 +142,12 @@ try {
 
     // Manual rollback N+1 → N: code back, database back from the cycle's copy.
     $w['fake']->database['records'][] = 'page:after-update';
+    $before = count($w['fake']->journal);
     $back = $w['cycle']->rollback($done->cycleId, $done->revision);
+    $steps = array_slice($w['fake']->journal, $before);
+    $activateAt = array_search('activate:1.2.0', $steps, true);
+    $restoreAt = array_search('restore:' . $done->rollbackBoundary?->snapshotRef, $steps, true);
+    cycle_assert($activateAt !== false && $restoreAt !== false && $activateAt < $restoreAt, 'The rollback must bring the previous code back before it restores the database with it.');
     cycle_assert($back->snapshot->state === UpdateCycleState::RolledBack && $back->warnings === ['records_after_update_lost'], 'A manual rollback must finish with its warning.');
     cycle_assert($w['pointer']->current() === '1.2.0' && $w['fake']->database === ['schema' => '1.2.0', 'records' => ['page:1', 'page:2']] && !$w['fake']->isDown(), 'Manual rollback must restore code and database.');
     cycle_assert(cycle_reason(fn () => $w['cycle']->rollback($done->cycleId, $back->snapshot->revision)) === 'update_rollback_not_available', 'A rolled back cycle cannot be rolled back again.');

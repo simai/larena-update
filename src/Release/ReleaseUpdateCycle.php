@@ -134,12 +134,14 @@ final readonly class ReleaseUpdateCycle
             $stage = 'maintenance';
             try {
                 $this->maintenance->enter($this->releaseDirectory($release->to));
+                // The code goes back first: the copy was taken by the previous release, and only its code (the same
+                // package revisions) may restore it into the database.
+                $stage = 'switch';
+                $this->activate($this->pointer->switchTo($release->from));
                 if ($restoreDatabase) {
                     $stage = 'restore';
                     $this->restoreDatabase($backupRef);
                 }
-                $stage = 'switch';
-                $this->activate($this->pointer->switchTo($release->from));
                 $stage = 'health';
                 $this->assertHealthy();
                 $stage = 'resume';
