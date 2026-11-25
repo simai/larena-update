@@ -248,7 +248,7 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         Kit::check((new PackageBatchPlanner($licence))->plan($listed, $installed, ['larena/legacy'])->refusals === [], 'a dev-main package with no release in the list is left alone');
         $legacyList = (new PackageListVerifier($verifier))->verify(...[...$list([$package('larena/legacy', '1.0.0')]), 'stable', $now]);
         Kit::check((new PackageBatchPlanner($licence))->plan($legacyList, $installed)->refusals[0]['requirement'] === 'installed version dev-main is not a release number', 'a dev-main package is never guessed');
-        Kit::check((new PackageBatchPlanner($licence))->plan($listed, $installed, ['larena/absent'])->refusals[0]['requirement'] === 'installed: the package is not in this release', 'a package the release does not have comes with a set release');
+        Kit::check((new PackageBatchPlanner($licence))->plan($listed, $installed, ['larena/absent'])->refusals[0]['requirement'] === 'not installed and not in the package list', 'a package neither installed nor listed is refused');
 
         // 1. A batch of two packages installs in one cycle: one copy, one switch, one journal.
         $w = $world('two');
@@ -267,7 +267,10 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
             && file_get_contents($release . '/vendor/larena/telephony/src/Telephony.php') === "<?php // larena/telephony 1.1.0\n"
             && file_get_contents($release . '/vendor/larena/core/src/Core.php') === "<?php // core 1.3.0\n", 'the batch replaces exactly its package folders');
         Kit::check(file_get_contents($w['site'] . '/releases/1.3.0/vendor/larena/storage/src/Storage.php') === "<?php // storage 1.2.0\n", 'the previous release is untouched');
-        Kit::check(!file_exists($release . '/.larena-signed') && readlink($release . '/storage') === '../../storage' && readlink($release . '/.env') === '../../.env', 'shared links, no stale signed set list');
+        Kit::check(file_get_contents($release . '/.larena-signed/release.json') === file_get_contents($w['site'] . '/releases/1.3.0/.larena-signed/release.json')
+            && readlink($release . '/storage') === '../../storage' && readlink($release . '/.env') === '../../.env', 'shared links, the set\'s signed folder carried for the package layer');
+        Kit::check(is_file($release . '/.larena-packages/larena/storage/larena-storage-1.3.0.tar.gz') && is_file($release . '/.larena-packages/larena/telephony/larena-telephony-1.1.0.tar.gz'),
+            'the release keeps the archive of every package the batch installed');
         $after = InstalledPackages::read($release, (string) $w['pointer']->currentVersion());
         Kit::check($after->productVersion === '1.3.0' && $after->versions['larena/storage'] === '1.3.0' && $after->versions['larena/telephony'] === '1.1.0'
             && $after->keptListVersion === 5 && PackageListState::forSite($w['site'])->seen() === 5, 'the release keeps what the batch installed');

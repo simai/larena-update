@@ -103,6 +103,15 @@ final readonly class PackageListVerifier
         return new PackageList($product, $channel, $version, $issuedAt, $expiresAt, $keyId, hash('sha256', $listBytes), $releases);
     }
 
+    /**
+     * One package release kept beside a release folder (`.larena-packages.json`), checked again on its own: the same
+     * signature and shape rules as inside a list. The integrity checks trust a package's files only through this.
+     */
+    public function verifyRelease(string $releaseBytes, string $signatureBytes): PackageRelease
+    {
+        return $this->release(['release' => $releaseBytes, 'signature' => $signatureBytes], $this->verifier->product());
+    }
+
     private function release(mixed $entry, string $product): PackageRelease
     {
         $bytes = is_array($entry) ? ($entry['release'] ?? null) : null;

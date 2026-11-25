@@ -7,6 +7,7 @@ namespace Larena\UpdateClient\Integrity;
 use Closure;
 use DateTimeImmutable;
 use DateTimeInterface;
+use Larena\UpdateClient\Packages\InstalledPackages;
 use Throwable;
 
 /**
@@ -16,7 +17,8 @@ use Throwable;
  * 1. `release`: every entry of the signed list. Size first; a file whose fingerprint (size, times, inode) is the one it
  *    had when it last matched its SHA-256 counts as unchanged; any other — new, touched, copied — is hashed again.
  *    Found: changed, deleted, type changed, a replaced `.htaccess`.
- * 2. `archive`: the kept release archive «Вернуть как было» needs, the same way (hash only when its fingerprint moved).
+ * 2. `archive`: the kept release archive «Вернуть как было» needs, and after a batch every kept package archive, the
+ *    same way (hash only when its fingerprint moved).
  * 3. `walk`: the release folders and the data folders, for what the list does not name: a new PHP file anywhere
  *    (also `x.php.jpg`, `.phtml`, `.phar`), a new `.htaccess` in the release or among the public uploads. Links are
  *    never followed. Laravel's own generated PHP (`bootstrap/cache/*.php` by name, compiled views by their hash name)
@@ -298,33 +300,49 @@ final readonly class IntegrityScanner
     }
 
     /**
+     * The kept archives «Вернуть как было» takes clean files from: the set archive, and after a batch the archive of
+     * every package it installed ({@see PackageLayer::ARCHIVES}).
+     *
      * @param array<string,mixed> $run
      * @param array<string,mixed> $stats
      */
     private function checkArchive(array &$run, array &$stats, SignedBaseline $baseline): void
     {
-        $path = $baseline->archivePath;
-        $stat = IntegrityLayout::stat($path);
-        $label = '.larena-signed/' . basename($path);
-        if ($stat === null) {
-            $run['found'][] = Finding::make('archive_missing', IntegrityLayout::RELEASE, $label, $baseline->release->archiveSha256);
-            $stats['archive'] = null;
-
-            return;
+        $stats['archive'] = $this->checkOneArchive($run, $stats['archive'] ?? null, $baseline->archivePath,
+            '.larena-signed/' . basename($baseline->archivePath), $baseline->release->archiveBytes, $baseline->release->archiveSha256);
+        $kept = [];
+        foreach ($baseline->layer->packages ?? [] as $name => $package) {
+            $release = $package['release'];
+            $kept[$name] = $this->checkOneArchive($run, $stats['packages'][$name] ?? null, $package['archive'],
+                PackageLayer::ARCHIVES . '/' . $name . '/' . $release->archiveFile, $release->archiveBytes, $release->archiveSha256);
         }
-        if (($stats['archive'] ?? null) === $stat) {
-            return;
+        $stats['packages'] = $kept;
+    }
+
+    /**
+     * @param array<string,mixed> $run
+     * @return string|null the fingerprint to keep for «unchanged»
+     */
+    private function checkOneArchive(array &$run, mixed $known, string $path, string $label, int $bytes, string $sha256): ?string
+    {
+        $stat = IntegrityLayout::stat($path);
+        if ($stat === null) {
+            $run['found'][] = Finding::make('archive_missing', IntegrityLayout::RELEASE, $label, $sha256);
+
+            return null;
+        }
+        if ($known === $stat) {
+            return $stat;
         }
         $run['counts']['hashed']++;
         $actual = !is_link($path) && is_file($path) ? @hash_file('sha256', $path) : false;
-        if (is_string($actual) && filesize($path) === $baseline->release->archiveBytes && hash_equals($baseline->release->archiveSha256, $actual)) {
-            $stats['archive'] = IntegrityLayout::settled($stat, $this->time()) ? $stat : null;
-
-            return;
+        if (is_string($actual) && filesize($path) === $bytes && hash_equals($sha256, $actual)) {
+            return IntegrityLayout::settled($stat, $this->time()) ? $stat : null;
         }
-        $stats['archive'] = null;
-        $run['found'][] = Finding::make('archive_damaged', IntegrityLayout::RELEASE, $label, $baseline->release->archiveSha256,
+        $run['found'][] = Finding::make('archive_damaged', IntegrityLayout::RELEASE, $label, $sha256,
             is_string($actual) ? $actual : null, is_file($path) ? (int) filesize($path) : null);
+
+        return null;
     }
 
     /**
@@ -364,7 +382,7 @@ final readonly class IntegrityScanner
             $relative = $folder === '' ? $name : $folder . '/' . $name;
             $path = $full . '/' . $name;
             if ($root === IntegrityLayout::RELEASE && ($relative === '.larena-signed' || $relative === '.larena-release'
-                || in_array($relative, self::SHARED, true))) {
+                || $relative === PackageLayer::ARCHIVES || $relative === InstalledPackages::RECORD || in_array($relative, self::SHARED, true))) {
                 continue;
             }
             if (is_link($path)) {

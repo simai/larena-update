@@ -11,9 +11,12 @@ namespace Larena\UpdateClient\Packages;
  *
  * Compatibility: every release's `requires.larena` holds for the product version the site runs, every
  * `requires.packages` rule holds for the version that package will have after the batch, and the packages a batch
- * installed earlier keep their own rules. Only installed packages are updated: a package the release does not have
- * comes with a set release (it needs the class map of the whole distribution). A package whose installed version is
- * not a number (`dev-main`) cannot be compared, so it is refused, never guessed.
+ * installed earlier keep their own rules. A package whose installed version is not a number (`dev-main`) cannot be
+ * compared, so it is refused, never guessed.
+ *
+ * A package the site does not have yet (a bought addon, a partner module; owner variant A: batches are for those)
+ * is installed only when it is asked for by name (`--only`): the newest release the licence covers, with the same
+ * rules. Its classes are added to the generated autoloader ({@see PackageAutoload}).
  */
 final readonly class PackageBatchPlanner
 {
@@ -27,8 +30,8 @@ final readonly class PackageBatchPlanner
         $refusals = [];
         $names = [];
         foreach ($only as $name) {
-            if (!isset($installed->versions[$name])) {
-                $refusals[] = self::incompatible($name, 'installed: the package is not in this release');
+            if (!isset($installed->versions[$name]) && $list->of($name) === []) {
+                $refusals[] = self::incompatible($name, 'not installed and not in the package list');
             }
             $names[$name] = true;
         }
@@ -44,18 +47,20 @@ final readonly class PackageBatchPlanner
         $chosen = [];
         $held = [];
         foreach (array_keys($names) as $name) {
-            if (!isset($installed->versions[$name])) {
-                continue;
-            }
-            $current = VersionConstraint::normalize($installed->versions[$name]);
             $releases = $list->of($name);
-            if ($current === null) {
-                if ($releases !== []) {
-                    $refusals[] = self::incompatible($name, 'installed version ' . $installed->versions[$name] . ' is not a release number');
+            if (!isset($installed->versions[$name])) {
+                // Not installed: only here because it was asked for by name; any release of it is «newer».
+                $newer = $releases;
+            } else {
+                $current = VersionConstraint::normalize($installed->versions[$name]);
+                if ($current === null) {
+                    if ($releases !== []) {
+                        $refusals[] = self::incompatible($name, 'installed version ' . $installed->versions[$name] . ' is not a release number');
+                    }
+                    continue;
                 }
-                continue;
+                $newer = array_values(array_filter($releases, static fn (PackageRelease $release): bool => version_compare($release->version, $current, '>')));
             }
-            $newer = array_values(array_filter($releases, static fn (PackageRelease $release): bool => version_compare($release->version, $current, '>')));
             $pick = null;
             foreach ($newer as $release) {
                 if (!$release->isPaid() || $this->licence->refusal($name, $release->releasedAt) === null) {
@@ -79,8 +84,8 @@ final readonly class PackageBatchPlanner
     }
 
     /**
-     * Checks exactly these releases against the release folder: newer than installed, covered by the licence,
-     * compatible after the batch. Used by {@see plan()} and again by the cycle right before it starts.
+     * Checks exactly these releases against the release folder: newer than installed (or not installed yet), covered
+     * by the licence, compatible after the batch. Used by {@see plan()} and again by the cycle right before it starts.
      *
      * @param list<PackageRelease> $releases
      * @return list<array{reason:string, package:string, requirement:string}>
@@ -96,17 +101,18 @@ final readonly class PackageBatchPlanner
         }
         foreach ($releases as $release) {
             $name = $release->package;
-            if (!isset($installed->versions[$name])) {
-                $refusals[] = self::incompatible($name, 'installed: the package is not in this release');
-                continue;
-            }
-            $current = VersionConstraint::normalize($installed->versions[$name]);
-            if ($current === null) {
-                $refusals[] = self::incompatible($name, 'installed version ' . $installed->versions[$name] . ' is not a release number');
-                continue;
-            }
-            if (version_compare($release->version, $current, '<=')) {
-                $refusals[] = self::incompatible($name, $release->version . ' is not newer than installed ' . $current);
+            if (isset($installed->versions[$name])) {
+                $current = VersionConstraint::normalize($installed->versions[$name]);
+                if ($current === null) {
+                    $refusals[] = self::incompatible($name, 'installed version ' . $installed->versions[$name] . ' is not a release number');
+                    continue;
+                }
+                if (version_compare($release->version, $current, '<=')) {
+                    $refusals[] = self::incompatible($name, $release->version . ' is not newer than installed ' . $current);
+                    continue;
+                }
+            } elseif (is_dir($installed->releaseDirectory . '/vendor/' . $name) || is_link($installed->releaseDirectory . '/vendor/' . $name)) {
+                $refusals[] = self::incompatible($name, 'vendor/' . $name . ' is in the release but not in installed.json');
                 continue;
             }
             if ($release->isPaid() && ($reason = $this->licence->refusal($name, $release->releasedAt)) !== null) {

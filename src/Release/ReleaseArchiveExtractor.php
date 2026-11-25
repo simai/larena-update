@@ -319,6 +319,36 @@ final readonly class ReleaseArchiveExtractor
     }
 
     /**
+     * Every entry of the archive with the sha256 of each file, without writing anything: the file list of a package
+     * archive whose own sha256 is under a signature (the package layer of the integrity checks).
+     *
+     * @return array<string,array{0:string,1:int,2:?string}> normalised path => [`file` | `dir`, bytes, sha256]
+     */
+    public function digests(string $archivePath): array
+    {
+        $entries = [];
+        $this->walk(
+            $archivePath,
+            static function (string $path) use (&$entries): void {
+                $entries[$path] = ['dir', 0, null];
+            },
+            static function (string $path, int $size, int $mode, $gz) use (&$entries): void {
+                $hash = hash_init('sha256');
+                $left = $size;
+                while ($left > 0) {
+                    $chunk = self::read($gz, min($left, self::CHUNK));
+                    hash_update($hash, $chunk);
+                    $left -= strlen($chunk);
+                }
+                $entries[$path] = ['file', $size, hash_final($hash)];
+            },
+        );
+        ksort($entries, SORT_STRING);
+
+        return $entries;
+    }
+
+    /**
      * Checks an archive against its file list before anything is unpacked ({@see FileList::matchArchive()}).
      */
     public function checkList(FileList $list, string $archivePath): void

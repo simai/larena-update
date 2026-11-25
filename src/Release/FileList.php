@@ -131,6 +131,37 @@ final readonly class FileList
         return new self($listProduct, $listVersion, $listArchive, $entries, $core, $bytes, hash('sha256', $bytes));
     }
 
+    /**
+     * A list put together on the site from entries that were each checked against a signature elsewhere: the set
+     * list with the package layer on top ({@see \Larena\UpdateClient\Integrity\PackageLayer}), or the list of one
+     * package archive. It goes through {@see parse()}, so it obeys every rule of a written list.
+     *
+     * @param array<array-key,array{type:string,bytes:int,sha256:?string,target:?string}> $entries path => entry
+     * @param list<string>                                                                 $coreFiles
+     */
+    public static function compose(string $product, string $version, string $archiveSha256, array $entries, array $coreFiles = []): self
+    {
+        ksort($entries, SORT_STRING);
+        $items = [];
+        foreach ($entries as $path => $entry) {
+            $item = ['path' => (string) $path, 'type' => $entry['type'], 'bytes' => $entry['bytes']];
+            if ($entry['sha256'] !== null) {
+                $item['sha256'] = $entry['sha256'];
+            }
+            if ($entry['target'] !== null) {
+                $item['target'] = $entry['target'];
+            }
+            $items[] = $item;
+        }
+        $core = array_values(array_unique($coreFiles));
+        sort($core, SORT_STRING);
+        $bytes = json_encode(['schema' => self::SCHEMA, 'schema_version' => self::SCHEMA_VERSION, 'product' => $product,
+            'version' => $version, 'archive_sha256' => $archiveSha256, 'entries' => $items, 'core_files' => $core],
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        return self::parse(is_string($bytes) ? $bytes : '');
+    }
+
     /** The list a verified release names: size and sha256 from the signed `release.json`, then {@see parse()} bound to it. */
     public static function forRelease(VerifiedRelease $release, string $bytes): self
     {

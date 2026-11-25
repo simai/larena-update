@@ -17,11 +17,18 @@ use Larena\UpdateClient\Release\ReleaseArchiveExtractor;
  *   new PHP file appears under its autoload folders (it could never load).
  *
  * A package that changes any of this needs a set release. Each failure is one `update_batch_incompatible` refusal.
+ *
+ * A package the set did not have (new in this batch, or added by an earlier one) is not compared with an installed
+ * entry: its autoload entries are generated for it ({@see PackageAutoload}), so it only has to use `psr-4`
+ * (`update_batch_autoload_unsupported` otherwise) and require nothing that is neither installed nor in the batch.
  */
 final class PackageArchiveCheck
 {
-    /** @return list<array{reason:string, package:string, requirement:string}> */
-    public static function check(ReleaseArchiveExtractor $extractor, PackageRelease $release, string $archivePath, InstalledPackages $installed): array
+    /**
+     * @param list<string> $batch the packages of the whole batch (a new package may require another one of them)
+     * @return list<array{reason:string, package:string, requirement:string}>
+     */
+    public static function check(ReleaseArchiveExtractor $extractor, PackageRelease $release, string $archivePath, InstalledPackages $installed, array $batch = []): array
     {
         $name = $release->package;
         $composer = $extractor->entry($archivePath, 'composer.json');
@@ -36,23 +43,32 @@ final class PackageArchiveCheck
         if (!is_array($data) || ($data['name'] ?? null) !== $name) {
             return [self::refusal($name, 'composer.json names another package')];
         }
-        $entry = $installed->composer[$name] ?? [];
+        $generated = !isset($installed->composer[$name]) || $installed->isAdded($name);
         $refusals = [];
-        if (self::canonical($data['autoload'] ?? []) !== self::canonical($entry['autoload'] ?? [])) {
-            $refusals[] = self::refusal($name, 'autoload differs from the installed package');
-        }
-        $laravel = is_array($data['extra'] ?? null) ? ($data['extra']['laravel'] ?? []) : [];
-        $installedLaravel = is_array($entry['extra'] ?? null) ? ($entry['extra']['laravel'] ?? []) : [];
-        if (self::canonical($laravel) !== self::canonical($installedLaravel)) {
-            $refusals[] = self::refusal($name, 'extra.laravel (providers) differs from the installed package');
+        if ($generated) {
+            try {
+                PackageAutoload::describe($extractor, $release, $archivePath);
+            } catch (PackageBatchRefused $refused) {
+                $refusals = $refused->refusals;
+            }
+        } else {
+            $entry = $installed->composer[$name];
+            if (self::canonical($data['autoload'] ?? []) !== self::canonical($entry['autoload'] ?? [])) {
+                $refusals[] = self::refusal($name, 'autoload differs from the installed package');
+            }
+            $laravel = is_array($data['extra'] ?? null) ? ($data['extra']['laravel'] ?? []) : [];
+            $installedLaravel = is_array($entry['extra'] ?? null) ? ($entry['extra']['laravel'] ?? []) : [];
+            if (self::canonical($laravel) !== self::canonical($installedLaravel)) {
+                $refusals[] = self::refusal($name, 'extra.laravel (providers) differs from the installed package');
+            }
         }
         foreach (array_keys(is_array($data['require'] ?? null) ? $data['require'] : []) as $dependency) {
             if (is_string($dependency) && preg_match('/\A(php|php-64bit|composer|composer-plugin-api|composer-runtime-api)\z|\A(ext|lib)-/D', $dependency) !== 1
-                && !isset($installed->composer[$dependency])) {
+                && !isset($installed->composer[$dependency]) && !in_array($dependency, $batch, true)) {
                 $refusals[] = self::refusal($name, 'requires ' . $dependency . ' (not installed)');
             }
         }
-        if ($installed->classmap !== null) {
+        if ($installed->classmap !== null && !$generated) {
             $refusals = [...$refusals, ...self::classmap($extractor, $release, $archivePath, $installed, is_array($data['autoload'] ?? null) ? $data['autoload'] : [])];
         }
 

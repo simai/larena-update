@@ -142,7 +142,7 @@ final class UpdatePackagesCommand extends UpdateCommand
         foreach ($plan->releases as $release) {
             $packages[] = [
                 'package' => $release->package,
-                'from' => $installed->versions[$release->package] ?? '?',
+                'from' => $installed->versions[$release->package] ?? 'new',
                 'to' => $release->version,
                 'released_at' => $release->releasedAt->format('Y-m-d'),
                 'paid' => $release->isPaid(),

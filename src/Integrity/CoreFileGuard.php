@@ -158,7 +158,8 @@ final readonly class CoreFileGuard
     {
         $stats = [];
         foreach (explode('|', SignedBaseline::fingerprint($this->layout)) as $stat) {
-            $stats[] = $stat;
+            // The batch record's part carries its own name in front of the fingerprint.
+            $stats[] = str_starts_with($stat, 'packages:') ? substr($stat, 9) : $stat;
         }
         $root = $this->layout->root(IntegrityLayout::RELEASE);
         foreach ($paths as $path) {

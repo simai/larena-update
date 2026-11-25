@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Larena\UpdateClient\Packages;
 
+use Larena\UpdateClient\Integrity\PackageLayer;
 use Larena\UpdateClient\Release\ReleaseArchiveExtractor;
 use Larena\UpdateClient\Release\ReleaseDirectory;
 use Larena\UpdateClient\Release\ReleaseSharedLinks;
@@ -17,18 +18,26 @@ use Throwable;
  *
  * Built in `releases/.<release>.partial` and renamed into place in one step. Not copied: the shared links (`.env`,
  * `storage`, `public/storage`, linked again by {@see ReleaseSharedLinks}), the release marker and the batch record
- * (written anew), and the set release's signed folder `.larena-signed/`: its file list describes the set, not this
- * release, and «Вернуть как было» must never put the old package files back. A link inside the release is copied as a
- * link only when it is relative and stays inside the release (`update_batch_layout_invalid` otherwise).
+ * (written anew). A link inside the release is copied as a link only when it is relative and stays inside the
+ * release (`update_batch_layout_invalid` otherwise).
+ *
+ * For the integrity checks ({@see PackageLayer}) the new release carries the set's signed folder `.larena-signed/`
+ * as it is (hard links where the disk allows, copies otherwise) and keeps the archive of every package a batch
+ * installed in `.larena-packages/<vendor>/<name>/`: the checks lay those packages over the set list, and «Вернуть
+ * как было» takes a package's files from its own archive, never the old ones from the set. When the release has
+ * packages the set did not have, the Composer files computed for them ({@see PackageAutoload}) replace the copied
+ * ones, and Laravel's package discovery cache is left out, so the next boot finds the new providers.
  *
  * The new release keeps {@see InstalledPackages::RECORD}: for every package a batch installed (this one and earlier
- * ones) its version, publication date, exact signed release and signature, and the list version. Its marker
+ * ones) its version, publication date, exact signed release and signature, whether a batch added it, and the list
+ * version. Its marker
  * `.larena-release` keeps the product version, the set archive's checksum and the record's checksum; running again for
  * the same batch returns the existing folder, any other folder under the name is `release_directory_differs`.
  */
 final class PackageBatchLayout
 {
-    private const NOT_COPIED = ['.env', 'storage', 'public/storage', ReleaseArchiveExtractor::MARKER, ReleaseArchiveExtractor::SIGNED, InstalledPackages::RECORD];
+    private const NOT_COPIED = ['.env', 'storage', 'public/storage', ReleaseArchiveExtractor::MARKER, ReleaseArchiveExtractor::SIGNED,
+        InstalledPackages::RECORD, PackageLayer::ARCHIVES];
 
     /** @param array<string,string> $archives package => checked archive path */
     public static function build(ReleaseArchiveExtractor $extractor, string $siteRoot, CheckedPackageBatch $batch, string $releaseId, array $archives): string
@@ -59,6 +68,11 @@ final class PackageBatchLayout
         foreach ($batch->releases as $release) {
             $skip['vendor/' . $release->package] = true;
         }
+        if ($batch->generated !== []) {
+            foreach ([...array_keys($batch->generated), ...PackageAutoload::DISCOVERY_CACHE] as $path) {
+                $skip[$path] = true;
+            }
+        }
         $partial = $site . '/releases/.' . $id . '.partial';
         ReleaseDirectory::remove($partial);
         if (!mkdir($partial, 0755)) {
@@ -77,7 +91,17 @@ final class PackageBatchLayout
                     throw new RuntimeException('release_directory_write_failed');
                 }
                 $extractor->unpackInto($archive, $directory);
+                self::keep($archive, PackageLayer::archivePath($partial, $release->package, $release->archiveFile));
             }
+            foreach ($batch->keptArchives as $package => $archive) {
+                self::keep($archive, $partial . '/' . PackageLayer::ARCHIVES . '/' . $package . '/' . basename($archive));
+            }
+            foreach ($batch->generated as $path => $bytes) {
+                if (!is_dir(dirname($partial . '/' . $path)) || file_put_contents($partial . '/' . $path, $bytes) !== strlen($bytes)) {
+                    throw new RuntimeException('release_directory_write_failed');
+                }
+            }
+            self::keepSigned($source . '/' . ReleaseArchiveExtractor::SIGNED, $partial . '/' . ReleaseArchiveExtractor::SIGNED);
             if (file_put_contents($partial . '/' . InstalledPackages::RECORD, $record) !== strlen($record)
                 || file_put_contents($partial . '/' . ReleaseArchiveExtractor::MARKER, $marker) !== strlen($marker)
                 || !rename($partial, $target)) {
@@ -139,6 +163,11 @@ final class PackageBatchLayout
                 'signature' => $release->signatureBytes,
             ];
         }
+        foreach ($batch->added as $package) {
+            if (isset($packages[$package])) {
+                $packages[$package]['added'] = true;
+            }
+        }
         ksort($packages, SORT_STRING);
 
         return json_encode([
@@ -158,6 +187,43 @@ final class PackageBatchLayout
         $sha = is_array($data) ? ($data['archive_sha256'] ?? null) : null;
 
         return is_string($sha) && preg_match('/\A[a-f0-9]{64}\z/D', $sha) === 1 ? $sha : null;
+    }
+
+    /** A kept archive in the new release: a hard link where the disk allows, a checked copy otherwise. */
+    private static function keep(string $from, string $to): void
+    {
+        if (!is_dir(dirname($to)) && !mkdir(dirname($to), 0755, true) && !is_dir(dirname($to))) {
+            throw new RuntimeException('release_directory_write_failed');
+        }
+        if (file_exists($to) || is_link($to)) {
+            throw new RuntimeException('release_directory_write_failed');
+        }
+        if (@link($from, $to)) {
+            return;
+        }
+        if (!copy($from, $to) || filesize($to) !== filesize($from)) {
+            throw new RuntimeException('release_directory_write_failed');
+        }
+    }
+
+    /** The set's signed folder as it is (its files only); a release without one stays without one. */
+    private static function keepSigned(string $from, string $to): void
+    {
+        if (is_link($from) || !is_dir($from)) {
+            return;
+        }
+        if (!mkdir($to, 0755)) {
+            throw new RuntimeException('release_directory_write_failed');
+        }
+        foreach ((array) scandir($from) as $name) {
+            if (!is_string($name) || $name === '.' || $name === '..') {
+                continue;
+            }
+            if (is_link($from . '/' . $name) || !is_file($from . '/' . $name)) {
+                throw new RuntimeException('update_batch_layout_invalid');
+            }
+            self::keep($from . '/' . $name, $to . '/' . $name);
+        }
     }
 
     /** @param array<string,true> $skip relative paths not copied */

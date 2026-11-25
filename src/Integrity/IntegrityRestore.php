@@ -15,7 +15,9 @@ use Throwable;
  *
  * - Clean release files come from the archive of the running release kept in `<release>/.larena-signed/`, trusted
  *   through the signed `release.json` (its sha256) and checked file by file against the signed list
- *   ({@see ReleaseArchiveExtractor::restoreEntries()}).
+ *   ({@see ReleaseArchiveExtractor::restoreEntries()}). After a package batch, a package's files come from that
+ *   package's kept archive (its sha256 under the package release's signature) and the Composer files the batch
+ *   generated from the bytes computed again from the signed inputs ({@see PackageLayer}).
  * - Extra PHP and `.htaccess` files are not deleted: they are moved to the quarantine (`<state>/quarantine/`, in the
  *   storage, outside the web root, renamed `<id>.quarantined` so nothing runs them) with their place, size and sha256,
  *   and can be put back ({@see returnItem()}).
@@ -107,18 +109,27 @@ final readonly class IntegrityRestore
         ksort($restore, SORT_STRING);
         ksort($quarantine, SORT_STRING);
         $blockers = [];
-        if ($restore !== []) {
-            $archive = $baseline->archivePath;
-            if (is_link($archive) || !is_file($archive)) {
-                $blockers[] = 'integrity_archive_missing';
-            } else {
-                $sha = @hash_file('sha256', $archive);
-                if (!is_string($sha) || filesize($archive) !== $baseline->release->archiveBytes
-                    || !hash_equals($baseline->release->archiveSha256, $sha) || !hash_equals($list->archiveSha256, $sha)) {
-                    $blockers[] = 'integrity_archive_damaged';
-                }
+        $archives = [];
+        foreach ($restore as $path => $item) {
+            $source = $baseline->source($path);
+            if ($source[0] === 'set') {
+                $archives['set'] = [$baseline->archivePath, $baseline->release->archiveBytes, $baseline->release->archiveSha256];
+            } elseif ($source[0] === 'package') {
+                $release = $baseline->layer->packages[$source[1]]['release'];
+                $archives[$source[1]] = [(string) $baseline->layer->packages[$source[1]]['archive'], $release->archiveBytes, $release->archiveSha256];
             }
         }
+        foreach ($archives as [$archive, $bytes, $sha256]) {
+            if (is_link($archive) || !is_file($archive)) {
+                $blockers[] = 'integrity_archive_missing';
+                continue;
+            }
+            $sha = @hash_file('sha256', $archive);
+            if (!is_string($sha) || filesize($archive) !== $bytes || !hash_equals($sha256, $sha)) {
+                $blockers[] = 'integrity_archive_damaged';
+            }
+        }
+        $blockers = array_values(array_unique($blockers));
 
         return new RestorePlan($list->sha256, array_values($restore), array_values($quarantine), $blockers, $skipped);
     }
@@ -147,9 +158,7 @@ final readonly class IntegrityRestore
             $quarantined = 0;
             try {
                 if ($plan->restore !== []) {
-                    $baseline = ($this->baseline)();
-                    $restored = count($this->extractor->restoreEntries($baseline->archivePath, $baseline->list,
-                        array_map(static fn (array $item): string => $item['path'], $plan->restore), $this->layout->releaseRoot));
+                    $restored = $this->restoreFiles(($this->baseline)(), array_map(static fn (array $item): string => $item['path'], $plan->restore));
                 }
                 foreach ($plan->quarantine as $item) {
                     $this->moveToQuarantine($item, $actor);
@@ -265,6 +274,54 @@ final readonly class IntegrityRestore
 
             return [];
         });
+    }
+
+    /**
+     * Writes release files again from where a clean copy comes from: the set archive, a package's kept archive, or
+     * (for the Composer files a batch generated) the bytes computed from the signed inputs.
+     *
+     * @param list<string> $paths
+     */
+    private function restoreFiles(SignedBaseline $baseline, array $paths): int
+    {
+        $groups = [];
+        foreach ($paths as $path) {
+            $source = $baseline->source($path);
+            $groups[$source[0] === 'package' ? 'package:' . $source[1] : $source[0]][] = $source[0] === 'package' ? (string) $source[2] : $path;
+        }
+        $root = rtrim($this->layout->releaseRoot, '/');
+        $restored = 0;
+        foreach ($groups as $group => $items) {
+            if ($group === 'set') {
+                $restored += count($this->extractor->restoreEntries($baseline->archivePath, $baseline->setList, $items, $root));
+            } elseif ($group === 'generated') {
+                foreach ($items as $path) {
+                    $this->writeGenerated($root . '/' . $path, $baseline->layer->generated[$path] ?? throw new IntegrityRefused('integrity_plan_changed'));
+                    $restored++;
+                }
+            } else {
+                $package = $baseline->layer->packages[substr($group, 8)] ?? throw new IntegrityRefused('integrity_plan_changed');
+                $directory = $root . '/vendor/' . substr($group, 8);
+                if (!is_dir($directory) && !@mkdir($directory, 0755, true) && !is_dir($directory)) {
+                    throw new IntegrityRefused('integrity_place_unwritable');
+                }
+                $restored += count($this->extractor->restoreEntries((string) $package['archive'], $package['list'], $items, $directory));
+            }
+        }
+
+        return $restored;
+    }
+
+    private function writeGenerated(string $file, string $bytes): void
+    {
+        if (is_link($file) || is_dir($file)) {
+            throw new IntegrityRefused('integrity_place_taken');
+        }
+        $temporary = $file . '.larena-restore-' . bin2hex(random_bytes(6));
+        if (@file_put_contents($temporary, $bytes) !== strlen($bytes) || !@chmod($temporary, 0644) || !@rename($temporary, $file)) {
+            @unlink($temporary);
+            throw new IntegrityRefused('integrity_place_unwritable');
+        }
     }
 
     /** @param array{root:string,path:string,sha256:string,bytes:int,kind:string} $item */

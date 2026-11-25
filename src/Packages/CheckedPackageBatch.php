@@ -7,12 +7,21 @@ namespace Larena\UpdateClient\Packages;
 /** A batch that passed every check of {@see PackageBatchCandidate::prepare()}: what its release folder is built from. */
 final readonly class CheckedPackageBatch
 {
-    /** @param list<PackageRelease> $releases */
+    /**
+     * @param list<PackageRelease>  $releases
+     * @param array<string,string>  $keptArchives package => kept archive in the running release, for every package an
+     *                                            earlier batch installed that this batch does not replace
+     * @param list<string>          $added        packages the set did not have, after this batch
+     * @param array<string,string>  $generated    the Composer files with the added packages in them (path => bytes)
+     */
     public function __construct(
         public PackageList $list,
         public array $releases,
         public InstalledPackages $installed,
         public string $from,
+        public array $keptArchives = [],
+        public array $added = [],
+        public array $generated = [],
     ) {
     }
 }

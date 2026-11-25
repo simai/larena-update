@@ -14,6 +14,10 @@ use Throwable;
  * What the files of the running release are compared with: the file list kept in `<release>/.larena-signed/`,
  * trusted again on every load through its signed `release.json` and the site's public release keys — never because
  * a local copy exists. The kept archive of the release (A4) is named by the same signed description.
+ *
+ * After a package batch the release also keeps the package releases it installed ({@see PackageLayer}): then
+ * {@see $list} is the set list with those packages laid over it, {@see $setList} the set list as signed, and
+ * {@see $layer} says where a clean copy of each file comes from.
  */
 final readonly class SignedBaseline
 {
@@ -24,7 +28,19 @@ final readonly class SignedBaseline
         public VerifiedRelease $release,
         public string $archivePath,
         public string $fingerprint,
+        public FileList $setList,
+        public ?PackageLayer $layer = null,
     ) {
+    }
+
+    /**
+     * Where a clean copy of a release file comes from ({@see PackageLayer::source()}; `['set']` without a layer).
+     *
+     * @return array{0:string,1?:string,2?:string}
+     */
+    public function source(string $path): array
+    {
+        return $this->layer?->source($path) ?? ['set'];
     }
 
     /**
@@ -58,24 +74,32 @@ final readonly class SignedBaseline
             if ($release->files === null || $release->files->file !== FileList::FILE) {
                 throw new RuntimeException('release_files_not_signed');
             }
-            $list = FileList::forRelease($release, $bytes[FileList::FILE]);
+            $set = FileList::forRelease($release, $bytes[FileList::FILE]);
+            $archive = $directory . '/' . $release->archiveFile;
+            $layer = PackageLayer::load($layout, $verifier, $set, $archive);
+            $list = $layer === null ? $set : $layer->apply($set);
         } catch (Throwable $failure) {
             throw new IntegrityUnavailable('integrity_list_untrusted', self::code($failure));
         }
 
-        return new self($list, $release, $directory . '/' . $release->archiveFile, $fingerprint);
+        return new self($list, $release, $archive, $fingerprint, $set, $layer);
     }
 
-    /** The three signed files as they lie now (size, times, inode): a different value means «load and verify again». */
+    /**
+     * The three signed files as they lie now (size, times, inode), and the batch record when there is one: a different
+     * value means «load and verify again».
+     */
     public static function fingerprint(IntegrityLayout $layout): string
     {
         $parts = [];
         foreach (self::FILES as $name) {
             $parts[] = IntegrityLayout::stat($layout->signedDirectory() . '/' . $name) ?? '-';
         }
+        $record = PackageLayer::fingerprint($layout);
 
         // A site from source has no signed files at all; its marker changes the value when that comes or goes.
-        return implode('|', $parts) . ($parts === ['-', '-', '-'] && $layout->sourceCheckout() ? '|source' : '');
+        return implode('|', $parts) . ($parts === ['-', '-', '-'] && $layout->sourceCheckout() ? '|source' : '')
+            . ($record !== null ? '|packages:' . $record : '');
     }
 
     private static function code(Throwable $failure): string
