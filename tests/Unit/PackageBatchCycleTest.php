@@ -124,7 +124,7 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         $archive = $tar($files ?? ['composer.json' => $composer($name, $namespace), 'src/' . $class . '.php' => "<?php // {$name} {$version}\n"]);
         $release = (string) json_encode($overrides + [
             'schema' => 'larena.package-release', 'schema_version' => 1, 'product' => 'larena', 'package' => $name, 'version' => $version,
-            'released_at' => '2026-11-20T10:00:00+00:00', 'distribution' => 'open',
+            'released_at' => '2026-11-20T10:00:00+00:00', 'distribution' => 'closed',
             'archive' => ['file' => str_replace('/', '-', $name) . '-' . $version . '.tar.gz', 'sha256' => hash('sha256', $archive), 'bytes' => strlen($archive)],
             'requires' => ['larena' => '>=1.3 <2.0', 'packages' => ['larena/core' => '^1.3']],
             'backward_incompatible_migrations' => false,
@@ -149,7 +149,7 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         'schema' => 'larena.entitlement', 'schema_version' => 1, 'snapshot_key' => 'snap.test', 'site' => 'site.test', 'product' => 'larena',
         'status' => 'active', 'capabilities' => ['telephony.base'],
         'issued_at' => (new DateTimeImmutable('-1 day'))->format(DATE_ATOM), 'valid_until' => (new DateTimeImmutable('+300 days'))->format(DATE_ATOM),
-        'updates_until' => ['larena/telephony' => '2026-06-01T00:00:00+00:00'],
+        'updates_until' => ['larena/storage' => '2027-06-01T00:00:00+00:00', 'larena/telephony' => '2026-06-01T00:00:00+00:00'],
     ], JSON_UNESCAPED_SLASHES);
     $envelope = ['entitlement' => $entitlement, 'signature' => (string) json_encode(['key_id' => 'licence.test',
         'signature' => base64_encode(sodium_crypto_sign_detached($entitlement, sodium_crypto_sign_secretkey($licencePair)))])];
@@ -323,6 +323,22 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         $refused = $w['cycle']->applyCandidate($request('packages:nolicensing'), $candidate($batch('nolicensing', $signedList, ['larena/telephony@1.1.0' => $telephonyOld]), $noLicensing));
         Kit::check($refused->reasonCode === 'update_batch_licence_ended', 'without larena/licensing no paid update is taken');
 
+        // 4b. Owner variant A: the product's own open packages come with the product, never in a batch.
+        $w = $world('open');
+        $openStorage = $package('larena/storage', '1.3.0', ['distribution' => 'open']);
+        $openList = $list([$openStorage, $telephonyOld]);
+        $openListed = (new PackageListVerifier($verifier))->verify($openList[0], $openList[1], 'stable', $now);
+        $openPlan = (new PackageBatchPlanner($licence))->plan($openListed, $installed);
+        Kit::check(!$openPlan->refused() && $openPlan->selection() === ['larena/telephony' => '1.1.0'], 'the plan leaves the product\'s open package out');
+        $askedOpen = (new PackageBatchPlanner($licence))->plan($openListed, $installed, ['larena/storage']);
+        Kit::check($askedOpen->refusals === [['reason' => 'update_batch_open_package', 'package' => 'larena/storage', 'requirement' => 'distribution open: updated with the product']],
+            'asking for an open package is refused, naming it');
+        $refused = $w['cycle']->applyCandidate($request('packages:open'), $candidate($batch('open', $openList, ['larena/storage@1.3.0' => $openStorage])));
+        Kit::check($refused->state === UpdateCycleState::Blocked && $refused->reasonCode === 'update_batch_open_package'
+            && preg_grep('/\A(backup|maintenance)/', $w['fake']->journal) === [] && $w['pointer']->current() === '1.3.0', 'an open package in a batch is refused before anything is touched');
+        $blocked = array_values(array_filter($w['audit']->events(), static fn (array $e): bool => $e['event'] === 'update.cycle.blocked'))[0];
+        Kit::check(($blocked['facts']['package'] ?? null) === 'larena/storage', 'the journal names the open package');
+
         // 5. A tampered archive, a foreign signature and a stale list are refused before the copy.
         $w = $world('tampered');
         $tampered = $batch('tampered', $signedList, ['larena/storage@1.3.0' => $storage]);
@@ -367,9 +383,10 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         [$bytes, $signature] = $client->packageSource()->list();
         $clientList = $client->packageListVerifier()->verify($bytes, $signature, $client->channel(), $now, $client->packageListState()->seen());
         $clientPlan = (new PackageBatchPlanner($client->packageLicence()))->plan($clientList, InstalledPackages::read($w['site'] . '/releases/1.3.0', $client->installedVersion()));
-        Kit::check($clientPlan->selection() === ['larena/storage' => '1.3.0'] && $clientPlan->held[0]['requirement'] === 'licensing_unavailable (1.2.0 released 2026-08-01)', 'without larena/licensing only open packages go');
-        $clientRequest = $client->batchRequest($clientPlan, 'user:1', 'packages:client');
-        Kit::check($clientRequest->steps === ReleaseUpdateCycle::STEPS && $clientRequest->manifest->packageRefs === ['larena/storage'] && $clientRequest->manifest->isVerified(), 'the batch runs the release cycle steps');
+        Kit::check($clientPlan->selection() === [] && array_column($clientPlan->held, 'requirement') === ['licensing_unavailable (1.3.0 released 2026-11-20)', 'licensing_unavailable (1.2.0 released 2026-08-01)'],
+            'without larena/licensing no closed package goes');
+        $clientRequest = $client->batchRequest($plan, 'user:1', 'packages:client');
+        Kit::check($clientRequest->steps === ReleaseUpdateCycle::STEPS && $clientRequest->manifest->packageRefs === ['larena/storage', 'larena/telephony'] && $clientRequest->manifest->isVerified(), 'the batch runs the release cycle steps');
     } finally {
         Kit::remove($root);
     }

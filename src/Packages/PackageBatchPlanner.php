@@ -14,7 +14,11 @@ namespace Larena\UpdateClient\Packages;
  * installed earlier keep their own rules. A package whose installed version is not a number (`dev-main`) cannot be
  * compared, so it is refused, never guessed.
  *
- * A package the site does not have yet (a bought addon, a partner module; owner variant A: batches are for those)
+ * Owner variant A (decision 2026-11-26): a batch installs or updates only closed packages (`distribution: closed` in
+ * the signed package release: paid addons, partner modules). The product's own open packages come with the product
+ * release: the plan leaves them out, and asking for one, or a cycle given one, is `update_batch_open_package`.
+ *
+ * A package the site does not have yet (a bought addon, a partner module)
  * is installed only when it is asked for by name (`--only`): the newest release the licence covers, with the same
  * rules. Its classes are added to the generated autoloader ({@see PackageAutoload}).
  */
@@ -48,6 +52,17 @@ final readonly class PackageBatchPlanner
         $held = [];
         foreach (array_keys($names) as $name) {
             $releases = $list->of($name);
+            $open = array_filter($releases, static fn (PackageRelease $release): bool => !$release->isPaid());
+            if ($open !== []) {
+                // The product's own packages come with the product (owner variant A): asked for by name, it is a refusal.
+                if (in_array($name, $only, true)) {
+                    $refusals[] = ['reason' => 'update_batch_open_package', 'package' => $name, 'requirement' => 'distribution open: updated with the product'];
+                }
+                $releases = array_values(array_filter($releases, static fn (PackageRelease $release): bool => $release->isPaid()));
+                if ($releases === []) {
+                    continue;
+                }
+            }
             if (!isset($installed->versions[$name])) {
                 // Not installed: only here because it was asked for by name; any release of it is «newer».
                 $newer = $releases;
@@ -101,6 +116,10 @@ final readonly class PackageBatchPlanner
         }
         foreach ($releases as $release) {
             $name = $release->package;
+            if (!$release->isPaid()) {
+                $refusals[] = ['reason' => 'update_batch_open_package', 'package' => $name, 'requirement' => 'distribution open: updated with the product'];
+                continue;
+            }
             if (isset($installed->versions[$name])) {
                 $current = VersionConstraint::normalize($installed->versions[$name]);
                 if ($current === null) {

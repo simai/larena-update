@@ -228,6 +228,7 @@ return [
         'update_batch_installed_unreadable' => 'the list of installed packages (vendor/composer/installed.json) could not be read.',
         'update_batch_record_unreadable' => 'the record of packages installed by earlier batches (.larena-packages.json) could not be read.',
         'update_batch_autoload_unsupported' => 'the new package cannot be added to this site\'s autoloader without Composer (it loads its classes another way, or a class name is already taken). It needs a set release; nothing on the site changed.',
+        'update_batch_open_package' => 'this package is part of the product and is updated together with it.',
         'update_batch_set_list_missing' => 'a new package needs the signed file list of the set release this site runs, and the site does not keep it. Install the set release again; nothing on the site changed.',
         'other' => 'unknown reason.',
     ],

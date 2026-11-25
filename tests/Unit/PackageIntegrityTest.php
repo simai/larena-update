@@ -138,7 +138,7 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         return ['site' => $site, 'fake' => $fake, 'cycle' => $cycle, 'pointer' => new ReleasePointer($site)];
     };
     /** A package archive and its signed release. @param array<string,string> $files */
-    $package = static function (string $name, string $version, array $files, string $distribution = 'open') use ($sign): array {
+    $package = static function (string $name, string $version, array $files, string $distribution = 'closed') use ($sign): array {
         $archive = Site::tar($files);
         $release = (string) json_encode([
             'schema' => 'larena.package-release', 'schema_version' => 1, 'product' => 'larena', 'package' => $name, 'version' => $version,
