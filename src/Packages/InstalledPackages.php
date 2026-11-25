@@ -1,0 +1,131 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Larena\UpdateClient\Packages;
+
+use JsonException;
+use RuntimeException;
+
+/**
+ * What one release folder runs, read from its own files without running any of them:
+ *
+ * - the product version (the release marker, {@see \Larena\UpdateClient\Release\ReleasePointer::version()});
+ * - every installed package with its version and Composer entry (`vendor/composer/installed.json`: `autoload`,
+ *   `extra.laravel`, `require`), the versions of packages a batch already replaced taken from
+ *   `.larena-packages.json` ({@see RECORD}) of the release;
+ * - the compatibility rules of those batch packages (from their kept signed releases), so a later batch keeps them;
+ * - the class map of the release (`vendor/composer/autoload_classmap.php`, read as text) and whether the autoloader
+ *   is authoritative (the distribution builds with `--classmap-authoritative`): then a class file that is not in the
+ *   map cannot load.
+ *
+ * A version that is not `major.minor.patch` (`dev-main`) is kept as it is: no version rule can hold for it.
+ */
+final readonly class InstalledPackages
+{
+    /** The record a batch release keeps of the package releases it installed. */
+    public const RECORD = '.larena-packages.json';
+    public const RECORD_SCHEMA = 'larena.release-packages';
+
+    /**
+     * @param array<string,string>                                         $versions     package => installed version
+     * @param array<string,array<array-key,mixed>>                         $composer     package => installed.json entry
+     * @param array<string,array{larena:string, packages:array<string,string>}> $requirements package => its rules
+     * @param array<string,array{version:string, released_at:string, release:string, signature:string}> $kept
+     * @param list<string>|null                                            $classmap     class files, relative to `vendor/`
+     */
+    public function __construct(
+        public string $productVersion,
+        public array $versions,
+        public array $composer,
+        public array $requirements,
+        public array $kept,
+        public int $keptListVersion,
+        public ?array $classmap,
+        public bool $classmapAuthoritative,
+    ) {
+    }
+
+    public static function read(string $releaseDirectory, string $productVersion): self
+    {
+        $release = rtrim($releaseDirectory, '/');
+        $installed = self::json($release . '/vendor/composer/installed.json', 'update_batch_installed_unreadable');
+        $entries = array_is_list($installed) ? $installed : ($installed['packages'] ?? null);
+        if (!is_array($entries) || !array_is_list($entries)) {
+            throw new RuntimeException('update_batch_installed_unreadable');
+        }
+        $versions = [];
+        $composer = [];
+        foreach ($entries as $entry) {
+            $name = is_array($entry) ? ($entry['name'] ?? null) : null;
+            if (!is_string($name) || preg_match('/\A[a-z0-9][a-z0-9_.-]*\/[a-z0-9][a-z0-9_.-]*\z/D', $name) !== 1) {
+                continue;
+            }
+            $versions[$name] = is_string($entry['version'] ?? null) ? $entry['version'] : 'unknown';
+            $composer[$name] = $entry;
+        }
+
+        $kept = [];
+        $requirements = [];
+        $listVersion = 0;
+        if (is_file($release . '/' . self::RECORD) && !is_link($release . '/' . self::RECORD)) {
+            $record = self::json($release . '/' . self::RECORD, 'update_batch_record_unreadable');
+            if (($record['schema'] ?? null) !== self::RECORD_SCHEMA || !is_array($record['packages'] ?? null)) {
+                throw new RuntimeException('update_batch_record_unreadable');
+            }
+            $listVersion = is_int($record['list_version'] ?? null) ? $record['list_version'] : 0;
+            foreach ($record['packages'] as $name => $item) {
+                if (!is_string($name) || !isset($versions[$name]) || !is_array($item) || !is_string($item['version'] ?? null)
+                    || !is_string($item['release'] ?? null) || !is_string($item['signature'] ?? null) || !is_string($item['released_at'] ?? null)) {
+                    throw new RuntimeException('update_batch_record_unreadable');
+                }
+                $kept[$name] = ['version' => $item['version'], 'released_at' => $item['released_at'], 'release' => $item['release'], 'signature' => $item['signature']];
+                $versions[$name] = $item['version'];
+                try {
+                    $data = json_decode($item['release'], true, 6, JSON_THROW_ON_ERROR);
+                } catch (JsonException) {
+                    throw new RuntimeException('update_batch_record_unreadable');
+                }
+                $rules = is_array($data) ? ($data['requires'] ?? null) : null;
+                if (is_array($rules) && is_string($rules['larena'] ?? null)) {
+                    $requirements[$name] = ['larena' => $rules['larena'], 'packages' => array_filter((array) ($rules['packages'] ?? []), 'is_string')];
+                }
+            }
+        }
+
+        [$classmap, $authoritative] = self::classmap($release . '/vendor/composer');
+
+        return new self($productVersion, $versions, $composer, $requirements, $kept, $listVersion, $classmap, $authoritative);
+    }
+
+    /** @return array{0: list<string>|null, 1: bool} */
+    private static function classmap(string $composerDirectory): array
+    {
+        $file = $composerDirectory . '/autoload_classmap.php';
+        if (!is_file($file) || is_link($file)) {
+            return [null, false];
+        }
+        $text = (string) file_get_contents($file);
+        preg_match_all('/=>\s*\$vendorDir\s*\.\s*\'\/([^\']+)\'/', $text, $matches);
+        $real = $composerDirectory . '/autoload_real.php';
+        $authoritative = is_file($real) && !is_link($real)
+            && preg_match('/setClassMapAuthoritative\(\s*true\s*\)/', (string) file_get_contents($real)) === 1;
+
+        return [array_values(array_unique($matches[1])), $authoritative];
+    }
+
+    /** @return array<array-key,mixed> */
+    private static function json(string $path, string $reason): array
+    {
+        if (is_link($path) || !is_file($path)) {
+            throw new RuntimeException($reason);
+        }
+        try {
+            $value = json_decode((string) file_get_contents($path), true, 64, JSON_THROW_ON_ERROR);
+        } catch (JsonException) {
+            throw new RuntimeException($reason);
+        }
+
+        return is_array($value) ? $value : throw new RuntimeException($reason);
+    }
+}

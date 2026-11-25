@@ -15,6 +15,14 @@ use Larena\UpdateClient\Contracts\EntitlementSnapshot;
 use Larena\UpdateClient\Contracts\UpdateManifest;
 use Larena\UpdateClient\Data\UpdateCycleRequest;
 use Larena\UpdateClient\Enums\ArtifactVerificationStatus;
+use Larena\UpdateClient\Packages\PackageBatch;
+use Larena\UpdateClient\Packages\PackageBatchCandidate;
+use Larena\UpdateClient\Packages\PackageBatchPlan;
+use Larena\UpdateClient\Packages\PackageListState;
+use Larena\UpdateClient\Packages\PackageListVerifier;
+use Larena\UpdateClient\Packages\PackageSource;
+use Larena\UpdateClient\Packages\PackageUpdateLicence;
+use Larena\UpdateClient\Packages\SiteLicensingUpdateLicence;
 use Larena\UpdateClient\Release\ReleaseArchiveExtractor;
 use Larena\UpdateClient\Release\ReleaseDirectory;
 use Larena\UpdateClient\Release\ReleasePointer;
@@ -68,6 +76,7 @@ final readonly class SiteUpdateClient
      * @param array<string,mixed> $config the `update-client` configuration
      * @param Closure(): PDO      $database  the site database connection
      * @param (Closure(): PDO)|null $reconnect a new connection to the site database (after a restore replaced it)
+     * @param (Closure(): ?\Larena\Licensing\Site\SiteLicensing)|null $licensing the site's licence (larena/licensing)
      */
     public function __construct(
         private array $config,
@@ -78,6 +87,7 @@ final readonly class SiteUpdateClient
         private UpdateHttpClient $http,
         private ArtisanRunner $artisan,
         private ?Closure $reconnect = null,
+        private ?Closure $licensing = null,
     ) {
     }
 
@@ -258,6 +268,77 @@ final readonly class SiteUpdateClient
             new ArrayLogicalFile(
                 'logical:update:' . $release->version, 'update-' . $release->version,
                 new ArrayStorageBlobReference($checksum, 'update.downloads', $release->archiveBytes, 'application/gzip'),
+                FileVisibility::Internal, FileLifecycleClass::Temporary,
+            ),
+            ReleaseUpdateCycle::STEPS,
+        );
+    }
+
+    /** The package releases of the same sources (`<source>/packages/…`), downloaded next to the releases. */
+    public function packageSource(): PackageSource
+    {
+        $download = (array) ($this->config['download'] ?? []);
+        $directory = $download['directory'] ?? null;
+
+        return new PackageSource(
+            $this->http,
+            $this->sources(),
+            is_string($directory) && $directory !== '' ? $directory : $this->siteRoot() . '/storage/app/larena/update/downloads',
+            self::int($download['timeout'] ?? null, 600),
+            self::int($download['connect_timeout'] ?? null, 15),
+            is_string($this->config['site_key'] ?? null) ? $this->config['site_key'] : null,
+        );
+    }
+
+    public function packageListVerifier(): PackageListVerifier
+    {
+        return new PackageListVerifier($this->verifier());
+    }
+
+    public function packageListState(): PackageListState
+    {
+        return PackageListState::forSite($this->siteRoot());
+    }
+
+    /** The licence check of closed packages: `SiteLicensing::allowsUpdate()` where larena/licensing is in the site. */
+    public function packageLicence(): PackageUpdateLicence
+    {
+        $licensing = $this->licensing !== null ? ($this->licensing)() : null;
+
+        return new SiteLicensingUpdateLicence($licensing instanceof \Larena\Licensing\Site\SiteLicensing ? $licensing : null);
+    }
+
+    public function packageCandidate(PackageBatch $batch): PackageBatchCandidate
+    {
+        return new PackageBatchCandidate($this->verifier(), new ReleaseArchiveExtractor(), $this->packageLicence(), $batch, $this->channel());
+    }
+
+    /** The cycle request for a planned batch: every reference derived from the signed list and the chosen releases. */
+    public function batchRequest(PackageBatchPlan $plan, string $actorRef, string $idempotencyKey): UpdateCycleRequest
+    {
+        $list = $plan->list;
+        $manifestKey = 'packages.list_' . $list->listVersion;
+        $signatureRef = 'packages.json.sig:' . $list->keyId;
+        $checksum = 'sha256:' . $list->sha256;
+        $bytes = 0;
+        foreach ($plan->releases as $release) {
+            $bytes += $release->archiveBytes;
+        }
+        $host = parse_url($this->siteUrl(), PHP_URL_HOST);
+
+        return new UpdateCycleRequest(
+            $actorRef,
+            'packages:' . $list->listVersion . ':' . substr(hash('sha256', (string) json_encode($plan->selection())), 0, 16),
+            $idempotencyKey,
+            'update.plan.package_batch',
+            new UpdateManifest($manifestKey, $list->channel, array_keys($plan->selection()), $signatureRef, true),
+            new EntitlementSnapshot('update.open_channel', is_string($host) && $host !== '' ? $host : 'site', ['update.install'], true, true, true,
+                signingKeyId: $list->keyId, signatureValue: $checksum),
+            new StaticCapability('update.install', 'larena/update'),
+            new ArtifactVerificationResult('packages.batch', $checksum, $signatureRef, $manifestKey, ArtifactVerificationStatus::Verified, true, true),
+            new ArrayLogicalFile(
+                'logical:update:packages:' . $list->listVersion, 'packages-' . $list->listVersion,
+                new ArrayStorageBlobReference($checksum, 'update.downloads', max(1, $bytes), 'application/gzip'),
                 FileVisibility::Internal, FileLifecycleClass::Temporary,
             ),
             ReleaseUpdateCycle::STEPS,

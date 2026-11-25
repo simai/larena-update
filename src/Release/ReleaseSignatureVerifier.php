@@ -69,12 +69,29 @@ final readonly class ReleaseSignatureVerifier
         return $this->read($releaseBytes, $signatureBytes, null, null);
     }
 
-    private function read(string $releaseBytes, string $signatureBytes, ?string $installedVersion, ?string $channel): VerifiedRelease
+    /** The product every signed file this verifier accepts must name. */
+    public function product(): string
     {
-        if (strlen($releaseBytes) < 2 || strlen($releaseBytes) > self::MAX_RELEASE_BYTES
+        return $this->product;
+    }
+
+    /**
+     * Checks only the detached signature over exact bytes, by the same trusted and revoked keys and with the same
+     * reason codes as {@see verify()}, and returns the key id. Other signed files (the package list and the package
+     * releases in it) are read by their own owners after this.
+     */
+    public function signedBy(string $bytes, string $signatureBytes, int $maxBytes = self::MAX_RELEASE_BYTES): string
+    {
+        if (strlen($bytes) < 2 || strlen($bytes) > $maxBytes
             || strlen($signatureBytes) < 2 || strlen($signatureBytes) > self::MAX_SIGNATURE_BYTES) {
             throw new RuntimeException('release_files_invalid');
         }
+
+        return $this->signature($bytes, $signatureBytes);
+    }
+
+    private function signature(string $releaseBytes, string $signatureBytes): string
+    {
         $signature = self::json($signatureBytes, 'release_signature_invalid');
         $keyId = $signature['key_id'] ?? null;
         $value = is_string($signature['signature'] ?? null) ? base64_decode($signature['signature'], true) : false;
@@ -88,6 +105,13 @@ final readonly class ReleaseSignatureVerifier
         if (!sodium_crypto_sign_verify_detached($value, $releaseBytes, $key)) {
             throw new RuntimeException('release_signature_mismatch');
         }
+
+        return $keyId;
+    }
+
+    private function read(string $releaseBytes, string $signatureBytes, ?string $installedVersion, ?string $channel): VerifiedRelease
+    {
+        $keyId = $this->signedBy($releaseBytes, $signatureBytes);
 
         // Only signed bytes are read from here on.
         $release = self::json($releaseBytes, 'release_description_invalid');

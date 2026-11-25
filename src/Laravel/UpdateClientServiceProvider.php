@@ -17,6 +17,7 @@ use Larena\UpdateClient\Laravel\Console\IntegrityCheckCommand;
 use Larena\UpdateClient\Laravel\Console\IntegrityRestoreCommand;
 use Larena\UpdateClient\Laravel\Console\UpdateApplyCommand;
 use Larena\UpdateClient\Laravel\Console\UpdateCheckCommand;
+use Larena\UpdateClient\Laravel\Console\UpdatePackagesCommand;
 use Larena\UpdateClient\Laravel\Console\UpdateRollbackCommand;
 use Larena\UpdateClient\Laravel\Console\UpdateStatusCommand;
 use Larena\UpdateClient\Laravel\Integrity\AuditIntegrityHistory;
@@ -32,7 +33,7 @@ use Psr\Log\LoggerInterface;
 
 /**
  * The update client in a Larena site: configuration `update-client`, the `update_cycles` table, the commands
- * `larena:update:check|apply|rollback|status` and the internal activation address
+ * `larena:update:check|apply|packages|rollback|status` and the internal activation address
  * `POST /_larena/update/opcache-reset` (one-time token, see {@see OpcacheResetActivation}).
  *
  * The site's own file checks (owner decision 2026-11-20, {@see SiteIntegrity}): the main files on every request
@@ -82,6 +83,8 @@ final class UpdateClientServiceProvider extends ServiceProvider
 
                     return $database->reconnect()->getPdo();
                 },
+                static fn (): ?\Larena\Licensing\Site\SiteLicensing => class_exists(\Larena\Licensing\Site\SiteLicensing::class) && $app->bound(\Larena\Licensing\Site\SiteLicensing::class)
+                    ? $app->make(\Larena\Licensing\Site\SiteLicensing::class) : null,
             );
         });
     }
@@ -256,6 +259,7 @@ final class UpdateClientServiceProvider extends ServiceProvider
             $this->commands([
                 UpdateCheckCommand::class,
                 UpdateApplyCommand::class,
+                UpdatePackagesCommand::class,
                 UpdateRollbackCommand::class,
                 UpdateStatusCommand::class,
                 IntegrityCheckCommand::class,

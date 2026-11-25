@@ -251,6 +251,49 @@ final readonly class ReleaseArchiveExtractor
     }
 
     /**
+     * Unpacks a checked package archive into a new, empty folder (a package release of a batch goes into
+     * `vendor/<vendor>/<name>` of the batch release). The same tar reader and path rules as a release: only regular
+     * files and folders, no links, no absolute or `..` paths. The caller checks the archive's sha256 first.
+     */
+    public function unpackInto(string $archivePath, string $directory): void
+    {
+        if (is_link($directory) || !is_dir($directory) || count((array) scandir($directory)) !== 2) {
+            throw new RuntimeException('release_directory_differs');
+        }
+        $this->unpack($archivePath, $directory, null);
+    }
+
+    /**
+     * The content of one regular file of the archive (at most `$maxBytes`), or null when the archive has no such
+     * file. Nothing is written.
+     */
+    public function entry(string $archivePath, string $path, int $maxBytes = 1048576): ?string
+    {
+        $content = null;
+        $this->walk(
+            $archivePath,
+            static function (string $entry): void {
+            },
+            static function (string $entry, int $size, int $mode, $gz) use ($path, $maxBytes, &$content): void {
+                if ($entry === $path && $size <= $maxBytes) {
+                    $content = $size === 0 ? '' : self::read($gz, $size);
+
+                    return;
+                }
+                if ($entry === $path) {
+                    throw new RuntimeException('release_archive_too_large');
+                }
+                $left = $size;
+                while ($left > 0) {
+                    $left -= strlen(self::read($gz, min($left, self::CHUNK)));
+                }
+            },
+        );
+
+        return $content;
+    }
+
+    /**
      * Reads every entry of the archive without writing anything: the shape the list check compares.
      *
      * @return array<string,array{0:string,1:int}> normalised path => [`file` | `dir`, bytes]

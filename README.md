@@ -37,6 +37,9 @@ commands:
 - `larena:update:apply <version> --actor=<subject_ref>` — download, verify,
   copy the site through `larena/backup`, unpack, migrate, switch `current`,
   activate, check health; rolls back automatically on failure;
+- `larena:update:packages` — show the package updates this site may take as one
+  batch; with `--apply --actor=<subject_ref>` install them in one cycle (see
+  «Package batches» below; `--only=vendor/name` narrows it);
 - `larena:update:rollback --actor=<subject_ref>` — back to the previous release
   (database from the copy unless `--keep-database`);
 - `larena:update:status` — installed release, releases on disk, recent cycles.
@@ -91,5 +94,38 @@ check page.
 A database restore during a rollback keeps the update history: the cycles are
 carried over the restore. Nothing is installed without an operator running
 `larena:update:apply`.
+
+## Package batches
+
+A new site installs the signed set release; after that each package publishes
+its own releases (owner variant D, 2026-11-25). The update source serves one
+signed list for the product and channel, `<source>/packages/packages.json` and
+`packages.json.sig` (schema `larena.package-list`: `list_version` that only
+grows, `issued_at`, `expires_at`, and every package release as its own signed
+`larena.package-release`: version, `released_at`, `open` or `closed`, archive
+file, sha256 and size, and `requires.larena` / `requires.packages` from the
+package's `module.yaml` `delivery` block). Archives are at
+`<source>/packages/download/<vendor>/<name>/v<version>/<file>`.
+
+The site chooses the batch itself: for each installed package the newest newer
+release that its licence covers (closed packages ask
+`SiteLicensing::allowsUpdate()`; later releases are held with
+`update_batch_licence_ended`) and that fits the core version and the other
+packages after the batch. Then one cycle runs, the same steps as a release: one
+copy, one new folder `releases/<version>-p<list>-<hash>` (the running release
+with the batch's `vendor/<vendor>/<name>` folders replaced), one switch, the
+health check, and on any failure the same rollback (code first, then the
+database). Before the copy the site checks everything again and refuses with
+`update_batch_incompatible` (naming the package and the rule),
+`update_batch_licence_ended`, `update_batch_signature_invalid` (a list, release or
+archive that does not match its signature) or `update_batch_list_stale` (expired,
+or older than a list this site already saw, kept in
+`storage/app/larena/update/package-list.json`). A package archive must keep the
+installed `autoload` and providers, need no package the release does not have,
+and, with the distribution's authoritative class map, bring no new class file;
+otherwise it needs a set release. The batch release keeps what it installed in
+`.larena-packages.json` and does not carry the set's `.larena-signed/` file list
+(it no longer describes the files), so its file check reports «no list» until
+the integrity checks learn package lists.
 
 Canonical specifications are in `simai/larena-specs`.

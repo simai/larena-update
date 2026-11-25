@@ -34,6 +34,11 @@ use Throwable;
  *
  * The same idempotency key returns the stored cycle without running anything; a second cycle while one runs (lock)
  * or while one is unfinished in the store is refused with `update_cycle_already_running`.
+ *
+ * What a cycle installs is a {@see CycleCandidate}: {@see apply()} takes a signed set release, {@see applyCandidate()}
+ * any candidate — a batch of package releases (owner variant D, 2026-11-25) runs the same steps, one copy, one
+ * switch and the same rollback; its «verify» step checks the whole batch and its «extract» step lays out the one new
+ * release folder (the running release with the replaced package folders).
  */
 final readonly class ReleaseUpdateCycle
 {
@@ -63,6 +68,15 @@ final readonly class ReleaseUpdateCycle
 
     public function apply(UpdateCycleRequest $request, string $releaseBytes, string $signatureBytes, string $archivePath, string $channel = 'stable'): UpdateCycleSnapshot
     {
+        return $this->applyCandidate(
+            $request,
+            new SignedReleaseCandidate($this->verifier, $this->extractor, $releaseBytes, $signatureBytes, $archivePath, $channel),
+            $channel,
+        );
+    }
+
+    public function applyCandidate(UpdateCycleRequest $request, CycleCandidate $candidate, string $channel = 'stable'): UpdateCycleSnapshot
+    {
         if ($request->steps !== self::STEPS) {
             throw new InvalidArgumentException('update_cycle_plan_invalid');
         }
@@ -84,7 +98,7 @@ final readonly class ReleaseUpdateCycle
                 return $this->block($cycle, 'update_audit_unavailable', false);
             }
 
-            return $this->run($cycle, $releaseBytes, $signatureBytes, $archivePath, $channel);
+            return $this->run($cycle, $candidate);
         } finally {
             $lock->release();
         }
@@ -173,32 +187,27 @@ final readonly class ReleaseUpdateCycle
         }
     }
 
-    private function run(UpdateCycleSnapshot $cycle, string $releaseBytes, string $signatureBytes, string $archivePath, string $channel): UpdateCycleSnapshot
+    private function run(UpdateCycleSnapshot $cycle, CycleCandidate $candidate): UpdateCycleSnapshot
     {
         // 1. Preflight: read-only.
         try {
             $from = $this->pointer->current() ?? throw new RuntimeException('release_current_missing');
             $fromVersion = $this->pointer->currentVersion() ?? throw new RuntimeException('release_current_missing');
-            $this->preflight->check($this->site, is_file($archivePath) && !is_link($archivePath) ? (int) filesize($archivePath) : 0);
+            $this->preflight->check($this->site, $candidate->diskBytes($this->site));
         } catch (Throwable $exception) {
             return $this->block($cycle, $this->reason($exception, 'update_preflight_failed'));
         }
         $cycle = $this->advance($cycle, UpdateCycleState::Planned, release: new ReleaseTransition($from));
 
-        // 2. Signature and archive, against the version the current release runs. Nothing is written yet.
+        // 2. Signatures, archives and (for a batch) compatibility and licence, against what the current release runs.
+        // Nothing is written to the site yet.
         try {
-            $release = $this->verifier->verify($releaseBytes, $signatureBytes, $fromVersion, $channel);
-            ReleaseSignatureVerifier::verifyArchive($release, $archivePath);
-            // The signed file list, when the release has one: checked against release.json and the archive here.
-            $files = FileList::beside($release, $archivePath);
-            if ($files !== null) {
-                $this->extractor->checkList($files, $archivePath);
-            }
-            $to = ReleaseDirectory::id($release->version);
+            $prepared = $candidate->prepare($this->site, $from, $fromVersion);
+            $to = $prepared->releaseId;
         } catch (Throwable $exception) {
-            return $this->block($cycle, $this->reason($exception, 'update_release_invalid'));
+            return $this->block($cycle, $this->reason($exception, 'update_release_invalid'), facts: self::refusalFacts($exception));
         }
-        $cycle = $this->advance($cycle, UpdateCycleState::Planned, release: new ReleaseTransition($from, $to, $release->backwardIncompatibleMigrations));
+        $cycle = $this->advance($cycle, UpdateCycleState::Planned, release: new ReleaseTransition($from, $to, $prepared->backwardIncompatibleMigrations), facts: $prepared->facts);
 
         // 3. Site copy with a trial restore: the rollback boundary. No verified copy, no code.
         try {
@@ -225,8 +234,7 @@ final readonly class ReleaseUpdateCycle
             try {
                 switch ($step) {
                     case 'extract':
-                        $this->extractor->extract($release, $archivePath, $this->site, $to, $releaseBytes, $signatureBytes);
-                        ReleaseSharedLinks::link($this->site, $to);
+                        $candidate->lay($this->site, $prepared);
                         break;
                     case 'maintenance':
                         $maintenance = true;
@@ -270,7 +278,7 @@ final readonly class ReleaseUpdateCycle
             $cleanup = ['cleanup_reason' => $this->reason($exception, 'update_cleanup_failed')];
         }
         $completed = $this->advance($cycle, UpdateCycleState::Completed, facts: $cleanup);
-        $this->record('update.cycle.completed', $completed, ['from_release' => $from, 'to_release' => $to]);
+        $this->record('update.cycle.completed', $completed, ['from_release' => $from, 'to_release' => $to] + $prepared->facts);
 
         return $completed;
     }
@@ -330,14 +338,15 @@ final readonly class ReleaseUpdateCycle
         return $next;
     }
 
-    private function block(UpdateCycleSnapshot $cycle, string $reason, bool $audit = true): UpdateCycleSnapshot
+    /** @param array<string, scalar|null> $facts */
+    private function block(UpdateCycleSnapshot $cycle, string $reason, bool $audit = true, array $facts = []): UpdateCycleSnapshot
     {
         $blocked = $this->store->save($cycle->transition(
             UpdateCycleState::Blocked, $cycle->nextStepIndex, $cycle->completedSteps,
             reasonCode: $reason, rollbackBoundary: $cycle->rollbackBoundary,
         ), $cycle->revision);
         if ($audit) {
-            $this->record('update.cycle.blocked', $blocked, ['reason_code' => $reason, 'step' => self::STEPS[$cycle->nextStepIndex]]);
+            $this->record('update.cycle.blocked', $blocked, ['reason_code' => $reason, 'step' => self::STEPS[$cycle->nextStepIndex]] + $facts);
         }
 
         return $blocked;
@@ -386,6 +395,21 @@ final readonly class ReleaseUpdateCycle
         } catch (Throwable) {
             return false;
         }
+    }
+
+    /**
+     * The package and the requirement a refused batch names, for the journal.
+     *
+     * @return array<string, scalar|null>
+     */
+    private static function refusalFacts(Throwable $exception): array
+    {
+        if (!$exception instanceof \Larena\UpdateClient\Packages\PackageBatchRefused) {
+            return [];
+        }
+        $first = $exception->refusals[0] ?? null;
+
+        return $first === null ? [] : ['package' => substr($first['package'], 0, 160), 'requirement' => substr(str_replace("\n", ' ', $first['requirement']), 0, 160)];
     }
 
     private function reason(Throwable $exception, string $fallback): string
