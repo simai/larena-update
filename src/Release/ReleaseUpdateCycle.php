@@ -29,8 +29,10 @@ use Throwable;
  * `planned` until the copy exists; `execution_ready` once the copy is the rollback boundary; `running` while code
  * and database change; `completed`. A failure before the copy is `blocked` (nothing was written to the site).
  * A failure from the unpack on rolls back: `current` back to the previous release, the database restored from the
- * copy if migrations were started, maintenance off — then `recoverable_failed`. If the rollback fails the cycle is
- * `manual_recovery_required` and the site stays in maintenance. A failed cleanup does not undo a healthy update.
+ * copy if migrations were started, maintenance off — then `recoverable_failed`; a failed activation of the previous
+ * release is only a warning there. If the code switch, the restore or the maintenance leave fails, the cycle is
+ * `manual_recovery_required` and the site stays in maintenance until {@see recover()} (`larena:update:recover`)
+ * finishes the rollback. A failed cleanup does not undo a healthy update.
  *
  * The same idempotency key returns the stored cycle without running anything; a second cycle while one runs (lock)
  * or while one is unfinished in the store is refused with `update_cycle_already_running`.
@@ -151,7 +153,7 @@ final readonly class ReleaseUpdateCycle
                 // The code goes back first: the copy was taken by the previous release, and only its code (the same
                 // package revisions) may restore it into the database.
                 $stage = 'switch';
-                $this->activate($this->pointer->switchTo($release->from));
+                $warnings = [...$warnings, ...$this->activateTolerating($this->pointer->switchTo($release->from))];
                 if ($restoreDatabase) {
                     $stage = 'restore';
                     $this->restoreDatabase($backupRef);
@@ -182,6 +184,93 @@ final readonly class ReleaseUpdateCycle
             ]);
 
             return new ReleaseRollbackOutcome($rolledBack, $warnings);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    /**
+     * Leaves `manual_recovery_required` (`larena:update:recover`): the site back on the release from before the cycle,
+     * with this cycle's copy, and out of maintenance. Maintenance on again (with this run's bypass), `current` to the
+     * previous release with its activation (a failed activation is the warning `rollback_activation_failed`), the
+     * database from the copy when the cycle had changed it, the health check (a failure is the warning
+     * `health_failed`: the person asked for the site back), maintenance off.
+     *
+     * A failed update ends `recoverable_failed` (it may be tried again), a failed rollback of a completed update ends
+     * `rolled_back`. Without `$restoreDatabase` the database stays as it is, which is refused when the failed update
+     * had started its migrations or the release declared backward-incompatible ones
+     * (`update_rollback_database_restore_required`). Any other cycle is refused with `update_recover_not_needed`; a
+     * failure on the way keeps the cycle `manual_recovery_required` with the reason `update_recover_<stage>_failed`.
+     * Every run reaches the audit with `recovered_by`.
+     */
+    public function recover(string $cycleId, int $expectedRevision, string $recoveredBy, bool $restoreDatabase = true): ReleaseRollbackOutcome
+    {
+        $lock = ReleaseCycleLock::acquire($this->site);
+        try {
+            $cycle = $this->store->require($cycleId);
+            if ($cycle->revision !== $expectedRevision) {
+                throw new RuntimeException('update_cycle_stale_state');
+            }
+            $release = $cycle->release;
+            $backupRef = $cycle->rollbackBoundary?->snapshotRef;
+            if ($cycle->state !== UpdateCycleState::ManualRecoveryRequired || $release === null || $backupRef === null) {
+                throw new RuntimeException('update_recover_not_needed');
+            }
+            $previous = $this->releaseDirectory($release->from);
+            if (is_link($previous) || !is_dir($previous)) {
+                throw new RuntimeException('update_rollback_previous_missing');
+            }
+            $failedUpdate = $cycle->failedStep !== null;
+            $databaseChanged = !$failedUpdate || $cycle->nextStepIndex >= (int) array_search('migrate', self::STEPS, true);
+            if (!$restoreDatabase && (($failedUpdate && $databaseChanged) || $release->backwardIncompatibleMigrations)) {
+                throw new RuntimeException('update_rollback_database_restore_required');
+            }
+            $restore = $restoreDatabase && $databaseChanged;
+            $warnings = $restore && !$failedUpdate ? ['records_after_update_lost'] : [];
+
+            $stage = 'maintenance';
+            try {
+                $this->maintenance->enter($previous);
+                $stage = 'switch';
+                $current = $this->pointer->current();
+                $switch = $current === $release->from
+                    ? new ReleaseSwitch($release->to ?? $release->from, $release->from, true)
+                    : $this->pointer->switchTo($release->from);
+                $warnings = [...$warnings, ...$this->activateTolerating($switch)];
+                if ($restore) {
+                    $stage = 'restore';
+                    $this->restoreDatabase($backupRef);
+                }
+                $stage = 'health';
+                if ($this->health->failedChecks($this->site) !== []) {
+                    $warnings[] = 'health_failed';
+                }
+                $stage = 'resume';
+                $this->maintenance->leave($previous);
+            } catch (Throwable $exception) {
+                $reason = $this->reason($exception, 'update_recover_'.$stage.'_failed');
+                $failed = $this->store->save($cycle->transition(
+                    UpdateCycleState::ManualRecoveryRequired, $cycle->nextStepIndex, $cycle->completedSteps,
+                    $cycle->failedStep, $reason, $cycle->rollbackBoundary,
+                ), $cycle->revision);
+                $this->record('update.cycle.recovery_failed', $failed, ['reason_code' => $reason, 'recover_stage' => $stage, 'recovered_by' => $recoveredBy, 'maintenance' => 'on']);
+
+                return new ReleaseRollbackOutcome($failed, $warnings);
+            }
+
+            $recovered = $this->store->save($cycle->transition(
+                $failedUpdate ? UpdateCycleState::RecoverableFailed : UpdateCycleState::RolledBack,
+                $cycle->nextStepIndex, $cycle->completedSteps,
+                $cycle->failedStep, $failedUpdate ? $cycle->reasonCode : null, $cycle->rollbackBoundary,
+            ), $cycle->revision);
+            $this->record('update.cycle.recovered', $recovered, [
+                'to_release' => $release->from,
+                'database_restored' => $restore,
+                'recovered_by' => $recoveredBy,
+                'warnings' => implode(',', $warnings),
+            ]);
+
+            return new ReleaseRollbackOutcome($recovered, $warnings);
         } finally {
             $lock->release();
         }
@@ -283,26 +372,41 @@ final readonly class ReleaseUpdateCycle
         return $completed;
     }
 
-    /** Automatic rollback of a failed step; see the class description for the outcome. */
+    /**
+     * Automatic rollback of a failed step; see the class description for the outcome. Each part runs on its own: a
+     * failed activation of the previous release (the OPcache reset at the site's own address, `queue:restart`) is a
+     * warning (`rollback_activation_failed`) and never skips the database restore or leaving maintenance — the code
+     * is back by then. Only a code switch, a restore or a maintenance leave that fails leaves the cycle
+     * `manual_recovery_required`, and then `larena:update:recover` finishes the job.
+     */
     private function fail(UpdateCycleSnapshot $cycle, string $step, string $reason, string $from, bool $maintenance, bool $migrationsStarted): UpdateCycleSnapshot
     {
-        $rolledBack = true;
-        $stage = 'switch';
+        $stage = null;
+        $warnings = [];
         try {
             if ($this->pointer->current() !== $from) {
-                $this->activate($this->pointer->switchTo($from));
-            }
-            if ($migrationsStarted) {
-                $stage = 'restore';
-                $this->restoreDatabase((string) $cycle->rollbackBoundary?->snapshotRef);
-            }
-            if ($maintenance) {
-                $stage = 'resume';
-                $this->maintenance->leave($this->releaseDirectory($from));
+                $warnings = $this->activateTolerating($this->pointer->switchTo($from));
             }
         } catch (Throwable) {
-            $rolledBack = false;
+            $stage = 'switch';
         }
+        $restored = false;
+        if ($stage === null && $migrationsStarted) {
+            try {
+                $this->restoreDatabase((string) $cycle->rollbackBoundary?->snapshotRef);
+                $restored = true;
+            } catch (Throwable) {
+                $stage = 'restore';
+            }
+        }
+        if ($stage === null && $maintenance) {
+            try {
+                $this->maintenance->leave($this->releaseDirectory($from));
+            } catch (Throwable) {
+                $stage = 'resume';
+            }
+        }
+        $rolledBack = $stage === null;
 
         $failed = $this->store->save($cycle->transition(
             $rolledBack ? UpdateCycleState::RecoverableFailed : UpdateCycleState::ManualRecoveryRequired,
@@ -312,14 +416,33 @@ final readonly class ReleaseUpdateCycle
             $reason,
             $cycle->rollbackBoundary,
         ), $cycle->revision);
-        $facts = ['failed_step' => $step, 'reason_code' => $reason, 'database_restored' => $rolledBack && $migrationsStarted];
+        $facts = ['failed_step' => $step, 'reason_code' => $reason, 'database_restored' => $restored]
+            + ($warnings !== [] ? ['warnings' => implode(',', $warnings)] : []);
         if ($rolledBack) {
             $this->record('update.cycle.rollback_confirmed', $failed, $facts);
         } else {
-            $this->record('update.cycle.manual_recovery_required', $failed, $facts + ['rollback_stage' => $stage, 'maintenance' => 'on']);
+            $this->record('update.cycle.manual_recovery_required', $failed, $facts + ['rollback_stage' => (string) $stage, 'maintenance' => $maintenance ? 'on' : 'off']);
         }
 
         return $failed;
+    }
+
+    /**
+     * Activations after a move of `current` back to a release that ran before: a failure is returned as the warning
+     * `rollback_activation_failed` (the previous code is in place; OPcache and the workers catch up on their own)
+     * instead of stopping the rollback.
+     *
+     * @return list<string>
+     */
+    private function activateTolerating(ReleaseSwitch $switch): array
+    {
+        try {
+            $this->activate($switch);
+        } catch (Throwable) {
+            return ['rollback_activation_failed'];
+        }
+
+        return [];
     }
 
     /** @param array<string, scalar|null> $facts */

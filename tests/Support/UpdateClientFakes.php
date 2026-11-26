@@ -97,6 +97,7 @@ final class PretendSite
     public string $schema = '1.2.0';
     public bool $down = false;
     public bool $failHealth = false;
+    public bool $unreachable = false;
 
     /** @var array<string,string> copy id => schema version */
     public array $copies = [];

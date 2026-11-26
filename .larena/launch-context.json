@@ -186,7 +186,10 @@
     "src/Laravel/Admin/UpdatesAdminController.php",
     "src/Laravel/ReleaseInstall.php",
     "tests/Unit/SpecsLinksCheckTest.php",
-    "tests/Unit/UpdatesSectionTest.php"
+    "tests/Unit/UpdatesSectionTest.php",
+    "src/Laravel/Console/UpdateRecoverCommand.php",
+    "src/Laravel/Http/SiteHealthController.php",
+    "src/Laravel/SelfAddressCheck.php"
   ],
   "forbidden_files": [
     "resources/*",

@@ -185,6 +185,49 @@ try {
     cycle_assert(in_array('update.cycle.manual_recovery_required', $events($w['audit']), true), 'Manual recovery must reach the audit.');
     cycle_assert(cycle_reason(fn () => $w['cycle']->apply($request('update:after-manual'), ...$signed('1.3.0'))) === 'update_cycle_already_running', 'No cycle may start over an unrecovered one.');
 
+    // larena:update:recover: the previous release, the database from the copy, maintenance off; audited; once.
+    cycle_assert(cycle_reason(fn () => $w['cycle']->recover($failed->cycleId, $failed->revision, 'user:2', false)) === 'update_rollback_database_restore_required'
+        && $w['fake']->isDown(), 'Keeping the database after started migrations must be refused without changes.');
+    $w['fake']->recover('restore')->recover('health');
+    $journalBefore = count($w['fake']->journal);
+    $recovered = $w['cycle']->recover($failed->cycleId, $failed->revision, 'user:2');
+    $recoverSteps = array_slice($w['fake']->journal, $journalBefore);
+    cycle_assert($recovered->snapshot->state === UpdateCycleState::RecoverableFailed && $recovered->snapshot->failedStep === 'health' && $recovered->warnings === [],
+        'A recovered failed update ends recoverable_failed: '.$recovered->snapshot->state->value);
+    cycle_assert($w['pointer']->current() === '1.2.0' && $w['fake']->database['schema'] === '1.2.0' && !$w['fake']->isDown(), 'Recovery must bring code and database back and end maintenance.');
+    cycle_assert($recoverSteps[0] === 'maintenance.enter:1.2.0' && end($recoverSteps) === 'maintenance.leave:1.2.0' && in_array('restore:' . $failed->rollbackBoundary?->snapshotRef, $recoverSteps, true)
+        && in_array('activate:1.2.0', $recoverSteps, true), 'Recovery re-enters maintenance with its own bypass, activates, restores, checks and leaves: '.implode(' ', $recoverSteps));
+    $recoveredEvent = array_values(array_filter($w['audit']->events(), static fn (array $e): bool => $e['event'] === 'update.cycle.recovered'))[0] ?? null;
+    cycle_assert($recoveredEvent !== null && $recoveredEvent['facts']['recovered_by'] === 'user:2' && $recoveredEvent['facts']['database_restored'] === true, 'Recovery must reach the audit with who ran it.');
+    cycle_assert($w['store']->findUnfinished() === null && cycle_reason(fn () => $w['cycle']->recover($failed->cycleId, $recovered->snapshot->revision, 'user:2')) === 'update_recover_not_needed', 'A recovered cycle is finished and cannot be recovered again.');
+    $again = $w['cycle']->apply($request('update:after-recover'), ...$signed('1.3.0'));
+    cycle_assert($again->state === UpdateCycleState::Completed && $w['pointer']->current() === '1.3.0', 'After recovery a new cycle may start: '.$again->state->value);
+
+    // The previous release cannot be activated either (the site does not reach its own address): the code is back, the
+    // database restored, maintenance off, a warning in the journal — never a site stuck in maintenance.
+    $w = $world('activation');
+    $w['fake']->fail('activate', 'update_opcache_reset_failed');
+    $failed = $w['cycle']->apply($request('update:activation'), ...$signed('1.3.0'));
+    cycle_assert($failed->state === UpdateCycleState::RecoverableFailed && $failed->failedStep === 'activate' && $failed->reasonCode === 'update_opcache_reset_failed', 'A failed activation must end recoverable: '.$failed->state->value);
+    cycle_assert($w['pointer']->current() === '1.2.0' && $w['fake']->database['schema'] === '1.2.0' && !$w['fake']->isDown(), 'The restore and the maintenance leave must still run.');
+    $confirmed = array_values(array_filter($w['audit']->events(), static fn (array $e): bool => $e['event'] === 'update.cycle.rollback_confirmed'))[0] ?? null;
+    cycle_assert($confirmed !== null && $confirmed['facts']['warnings'] === 'rollback_activation_failed' && $confirmed['facts']['database_restored'] === true, 'The failed activation of the old release is a warning in the journal.');
+
+    // A failed manual rollback recovers to rolled_back; a failed recovery stays manual with its stage.
+    $w = $world('recoverrollback');
+    $done = $w['cycle']->apply($request('update:recoverrollback'), ...$signed('1.3.0'));
+    $w['fake']->fail('restore');
+    $stuck = $w['cycle']->rollback($done->cycleId, $done->revision)->snapshot;
+    cycle_assert($stuck->state === UpdateCycleState::ManualRecoveryRequired && $w['fake']->isDown(), 'A failed manual rollback needs recovery.');
+    $still = $w['cycle']->recover($stuck->cycleId, $stuck->revision, 'user:2');
+    cycle_assert($still->snapshot->state === UpdateCycleState::ManualRecoveryRequired && $still->snapshot->reasonCode === 'fixture_failed' && $w['fake']->isDown()
+        && in_array('update.cycle.recovery_failed', $events($w['audit']), true), 'A failed recovery stays manual and is audited.');
+    $w['fake']->recover('restore')->fail('activate')->fail('health');
+    $back = $w['cycle']->recover($stuck->cycleId, $still->snapshot->revision, 'user:2');
+    cycle_assert($back->snapshot->state === UpdateCycleState::RolledBack && $back->warnings === ['records_after_update_lost', 'rollback_activation_failed', 'health_failed']
+        && $w['pointer']->current() === '1.2.0' && $w['fake']->database['schema'] === '1.2.0' && !$w['fake']->isDown(), 'A recovered rollback ends rolled_back, its warnings said: '.implode(',', $back->warnings));
+    cycle_assert(cycle_reason(fn () => $w['cycle']->recover($done->cycleId, 1, 'user:2')) === 'update_cycle_stale_state', 'A stale revision is refused.');
+
     // Tampered archive and foreign signature: refused before anything is written to the site.
     $w = $world('tampered');
     [$bytes, $signature, $archive] = $signed('1.3.0');

@@ -18,7 +18,10 @@ use Throwable;
  * `update_storage_not_writable`), no other unfinished cycle in `update_cycles` besides the one being checked
  * (`update_cycle_already_running`), and a queue without jobs in work: when the site database has the Laravel
  * `jobs` table, a reserved job refuses the update (`update_queue_busy`); without that table the check is skipped
- * and {@see notes()} says so (`queue_check_skipped`). Read-only.
+ * and {@see notes()} says so (`queue_check_skipped`). Last, with a {@see SelfAddressCheck}, the site must reach itself
+ * at the address the health check and the activation use (`update_self_health_unreachable`,
+ * `update_self_activation_unreachable`): the switch is never made on a site that could not activate it or roll it
+ * back. Read-only.
  */
 final class SitePreflight implements UpdatePreflight
 {
@@ -31,6 +34,7 @@ final class SitePreflight implements UpdatePreflight
         private readonly ?PdoUpdateExecutionStore $store = null,
         private readonly string $jobsTable = 'jobs',
         private readonly ?Closure $freeSpace = null,
+        private readonly ?SelfAddressCheck $selfAddress = null,
     ) {
         if (preg_match('/\A[A-Za-z_][A-Za-z0-9_]{0,63}\z/D', $this->jobsTable) !== 1) {
             throw new RuntimeException('update_queue_table_invalid');
@@ -61,6 +65,7 @@ final class SitePreflight implements UpdatePreflight
             throw new RuntimeException('update_cycle_already_running');
         }
         $this->checkQueue();
+        $this->selfAddress?->check();
     }
 
     private function checkQueue(): void

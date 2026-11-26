@@ -30,8 +30,9 @@ rollback, retry from a known failed step and idempotent replay.
 
 `Larena\UpdateClient\Laravel\UpdateClientServiceProvider` (package
 discovery) adds the configuration `update-client`, the `update_cycles` table,
-the internal activation address `POST /_larena/update/opcache-reset` and the
-commands:
+the internal activation address `POST /_larena/update/opcache-reset`, the
+health address `GET /_larena/update/health` (answers
+`{"status":"ok","check":"larena_update_health"}`) and the commands:
 
 - `larena:update:check` — ask the sources for a newer signed release;
 - `larena:update:apply <version> --actor=<subject_ref>` — download, verify,
@@ -42,7 +43,28 @@ commands:
   «Package batches» below; `--only=vendor/name` narrows it);
 - `larena:update:rollback --actor=<subject_ref>` — back to the previous release
   (database from the copy unless `--keep-database`);
+- `larena:update:recover --actor=<subject_ref> --confirm=<cycle id>` — leave
+  `manual_recovery_required` (a rollback that did not finish keeps the site in
+  maintenance and refuses new cycles): the previous release, the database from
+  the cycle's copy when the cycle had changed it (`--keep-database` only when
+  the failed update never reached its migrations), maintenance off; the cycle
+  ends `recoverable_failed` (a failed update) or `rolled_back` (a failed manual
+  rollback). Without `--confirm` it only says what it would do. Each run reaches
+  the update journal as `update.cycle.recovered` or `update.cycle.recovery_failed`
+  with `recovered_by`;
 - `larena:update:status` — installed release, releases on disk, recent cycles.
+
+Before the first write the preflight checks that the site reaches itself at
+`LARENA_UPDATE_SITE_URL` (else `APP_URL`): the health address must give its JSON
+answer (`update_self_health_unreachable`) and the activation address without a
+token its own 404 (`update_self_activation_unreachable`). After the switch the
+health check counts the home page and `/admin/login` as live unless they answer
+5xx or a PHP error page, and `/_larena/update/health` only with its JSON marker
+(a release from before that address: Laravel's `/up` with 2xx). The activation
+call counts only the reset address's own JSON answer. In the automatic rollback
+a failed activation of the previous release is the warning
+`rollback_activation_failed`; the database restore and leaving maintenance
+still run.
 
 Every command prints readable lines or `--json`. The site must use the release
 layout (`<site>/releases/<release>`, `<site>/current`). The version a release

@@ -18,6 +18,7 @@ use Larena\UpdateClient\Laravel\Console\IntegrityRestoreCommand;
 use Larena\UpdateClient\Laravel\Console\UpdateApplyCommand;
 use Larena\UpdateClient\Laravel\Console\UpdateCheckCommand;
 use Larena\UpdateClient\Laravel\Console\UpdatePackagesCommand;
+use Larena\UpdateClient\Laravel\Console\UpdateRecoverCommand;
 use Larena\UpdateClient\Laravel\Console\UpdateRollbackCommand;
 use Larena\UpdateClient\Laravel\Console\UpdateStatusCommand;
 use Larena\UpdateClient\Laravel\Integrity\AuditIntegrityHistory;
@@ -33,8 +34,9 @@ use Psr\Log\LoggerInterface;
 
 /**
  * The update client in a Larena site: configuration `update-client`, the `update_cycles` table, the commands
- * `larena:update:check|apply|packages|rollback|status` and the internal activation address
- * `POST /_larena/update/opcache-reset` (one-time token, see {@see OpcacheResetActivation}).
+ * `larena:update:check|apply|packages|rollback|recover|status`, the internal activation address
+ * `POST /_larena/update/opcache-reset` (one-time token, see {@see OpcacheResetActivation}) and the health address
+ * `GET /_larena/update/health` (a JSON marker, see {@see HttpSiteHealth}).
  *
  * The site's own file checks (owner decision 2026-11-20, {@see SiteIntegrity}): the main files on every request
  * (global middleware), the full check through the scheduler and the queue in portions, the alert bar, the pages
@@ -333,6 +335,7 @@ final class UpdateClientServiceProvider extends ServiceProvider
                 UpdatePackagesCommand::class,
                 UpdateRollbackCommand::class,
                 UpdateStatusCommand::class,
+                UpdateRecoverCommand::class,
                 IntegrityCheckCommand::class,
                 IntegrityRestoreCommand::class,
             ]);

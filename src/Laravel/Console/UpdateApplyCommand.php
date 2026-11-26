@@ -36,12 +36,18 @@ final class UpdateApplyCommand extends UpdateCommand
             }
 
             return (new ReleaseInstall($client))->install($version, $actor, $key);
-        }, static function (array $payload): array {
+        }, function (array $payload): array {
             $lines = ['Update ' . ($payload['from'] ?? '?') . ' → ' . ($payload['to'] ?? '?') . ': ' . self::describeState((string) $payload['status']) . '.'];
             if (isset($payload['failed_step'])) {
                 $lines[] = 'Failed step: ' . $payload['failed_step'] . ' (' . ($payload['reason'] ?? 'unknown') . ').';
             } elseif (isset($payload['reason'])) {
                 $lines[] = 'Reason: ' . $payload['reason'] . '.';
+            }
+            if (isset($payload['reason']) && ($text = $this->explain((string) $payload['reason'])) !== null) {
+                $lines[] = $text;
+            }
+            if ($payload['status'] === UpdateCycleState::ManualRecoveryRequired->value) {
+                $lines[] = 'Finish the rollback: php artisan larena:update:recover --actor=<subject_ref> --confirm=' . ($payload['cycle_id'] ?? '<cycle id>');
             }
             if (isset($payload['backup_ref'])) {
                 $lines[] = 'Site copy (larena/backup job): ' . $payload['backup_ref'] . '.';

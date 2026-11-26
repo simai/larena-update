@@ -206,7 +206,21 @@ final readonly class SiteUpdateClient
         $queue = (array) ($this->config['queue'] ?? []);
         $pdo = ($this->database)();
 
-        return new SitePreflight($pdo, new PdoUpdateExecutionStore($pdo), is_string($queue['jobs_table'] ?? null) ? $queue['jobs_table'] : 'jobs');
+        return new SitePreflight($pdo, new PdoUpdateExecutionStore($pdo), is_string($queue['jobs_table'] ?? null) ? $queue['jobs_table'] : 'jobs',
+            selfAddress: $this->selfAddressCheck());
+    }
+
+    /** The site's own address as the health check and the activation will call it, checked before the first write. */
+    public function selfAddressCheck(): SelfAddressCheck
+    {
+        $health = (array) ($this->config['health'] ?? []);
+        $activation = (array) ($this->config['activation'] ?? []);
+
+        return new SelfAddressCheck(
+            $this->http, $this->siteUrl(),
+            is_string($activation['path'] ?? null) ? $activation['path'] : '_larena/update/opcache-reset',
+            self::int($health['timeout'] ?? null, 10), (bool) ($health['verify_tls'] ?? true),
+        );
     }
 
     public function activationTokens(): ActivationTokenStore

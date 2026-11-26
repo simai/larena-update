@@ -36,6 +36,7 @@ return [
         'unfinished' => 'Одна установка не закончена. Пока она идёт, новая не начнётся.',
         'step' => 'шаг «:step»',
         'rollback' => 'Вернуть прежнюю версию вручную: php artisan larena:update:rollback.',
+        'recover' => 'Если откат не закончился и сайт остался на обслуживании: php artisan larena:update:recover --actor=<ваш subject_ref>.',
     ],
     'states' => [
         'completed' => 'установлено',

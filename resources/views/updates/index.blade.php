@@ -100,6 +100,7 @@
                 </ul>
             @endif
             <p class="text-small color-on-surface-variant">{{ __('larena-update-client::updates.journal.rollback') }}</p>
+            <p class="text-small color-on-surface-variant">{{ __('larena-update-client::updates.journal.recover') }}</p>
         </section>
     </div>
 @endsection

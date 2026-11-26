@@ -147,20 +147,70 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         $refused = new FakeArtisanRunner(static fn (): string => json_encode(['status' => 'failed', 'reason' => 'backup_actor_invalid']));
         Kit::check(Kit::reason(static fn () => (new LarenaBackupSiteCopy($refused, 'user:1'))->create($site, 'cycle126')) === 'backup_actor_invalid', 'The backup reason must come through.');
 
-        // Health: 5xx and no answer fail; 2xx, 3xx and 4xx are a live application.
+        // Health: 5xx, no answer and a PHP error page fail; 2xx, 3xx and 4xx are a live application; the health address
+        // counts only with its JSON marker (a release before it: Laravel's /up with 2xx).
+        $marker = (string) (new \Larena\UpdateClient\Laravel\Http\SiteHealthController())()->getContent();
         $answers = new stdClass();
-        $answers->map = ['/' => [200, 'ok'], '/admin/login' => [302, ''], '/up' => [404, ''], '/down' => [0, '']];
+        $answers->map = ['/' => [200, 'ok'], '/admin/login' => [302, ''], HttpSiteHealth::PATH => [200, $marker], '/down' => [0, '']];
         $http = new FakeUpdateHttpClient(static function (UpdateHttpRequest $request) use ($answers): array {
-            $answer = $answers->map[(string) parse_url($request->url, PHP_URL_PATH)];
+            $answer = $answers->map[(string) parse_url($request->url, PHP_URL_PATH)] ?? [404, ''];
 
             return $answer[0] === 0 ? throw new RuntimeException('update_http_failed') : $answer;
         });
         $health = new HttpSiteHealth($http, 'https://site.example.test/', $bypass, 3);
         Kit::check($health->failedChecks($site) === [], 'A live site passes.');
-        Kit::check(array_map(static fn (UpdateHttpRequest $r): string => $r->url, $http->requests) === ['https://site.example.test/', 'https://site.example.test/admin/login', 'https://site.example.test/up'], 'Health checks the home page, the admin login and /up at APP_URL.');
+        Kit::check(array_map(static fn (UpdateHttpRequest $r): string => $r->url, $http->requests) === ['https://site.example.test/', 'https://site.example.test/admin/login', 'https://site.example.test/_larena/update/health'], 'Health checks the home page, the admin login and the health address at APP_URL.');
         Kit::check($http->requests[0]->timeoutSeconds === 3 && !$http->requests[0]->followRedirects && isset($http->requests[0]->headers['Cookie']), 'Health uses a short timeout, no redirects and the maintenance bypass.');
-        $answers->map = ['/' => [0, ''], '/admin/login' => [200, ''], '/up' => [503, '']];
+        $answers->map = ['/' => [0, ''], '/admin/login' => [200, ''], HttpSiteHealth::PATH => [503, '']];
         Kit::check($health->failedChecks($site) === ['home', 'up'], 'No answer and 5xx must fail.');
+        $fatal = "<br />\n<b>Fatal error</b>:  Uncaught Error: Class not found in /srv/site/x.php:3";
+        $answers->map = ['/' => [200, $fatal], '/admin/login' => [200, 'PHP Parse error: syntax error'], HttpSiteHealth::PATH => [200, $fatal]];
+        Kit::check($health->failedChecks($site) === ['home', 'admin_login', 'up'], 'A 200 with a PHP error page must fail every check.');
+        $answers->map = ['/' => [200, 'ok'], '/admin/login' => [200, 'ok'], HttpSiteHealth::PATH => [200, '<html>ok</html>']];
+        Kit::check($health->failedChecks($site) === ['up'], 'A 200 without the JSON marker is not the health address.');
+        $answers->map = ['/' => [200, 'ok'], '/admin/login' => [200, 'ok'], HttpSiteHealth::PATH => [200, '{"status":"ok"}']];
+        Kit::check($health->failedChecks($site) === ['up'], 'JSON without the marker must fail.');
+        $answers->map = ['/' => [200, 'ok'], '/admin/login' => [200, 'ok'], '/up' => [200, '<html>Application up</html>']];
+        Kit::check($health->failedChecks($site) === [], 'A release before the health address passes with Laravel\'s /up.');
+        $answers->map = ['/' => [200, 'ok'], '/admin/login' => [200, 'ok'], '/up' => [200, $fatal]];
+        Kit::check($health->failedChecks($site) === ['up'], 'An error page on /up must fail too.');
+
+        // The site reaches itself before the first write: the health marker, and the activation address's own 404.
+        $tokensForProbe = new ActivationTokenStore($site . '/storage/app/larena/update-probe');
+        $resetController = new OpcacheResetController($tokensForProbe);
+        $selfAnswers = new stdClass();
+        $selfAnswers->health = [200, $marker];
+        $selfAnswers->reset = null;
+        $self = new FakeUpdateHttpClient(static function (UpdateHttpRequest $request) use ($selfAnswers, $resetController): array {
+            if ($request->method === 'GET') {
+                return $selfAnswers->health[0] === 0 ? throw new RuntimeException('update_http_failed') : $selfAnswers->health;
+            }
+            if ($selfAnswers->reset !== null) {
+                return $selfAnswers->reset;
+            }
+            $response = $resetController(Request::create('/_larena/update/opcache-reset', 'POST', server: ['HTTP_X_LARENA_UPDATE_TOKEN' => $request->headers[OpcacheResetActivation::HEADER] ?? '']));
+
+            return [$response->getStatusCode(), (string) $response->getContent()];
+        });
+        $probe = new \Larena\UpdateClient\Laravel\SelfAddressCheck($self, 'http://127.0.0.1:8182', '_larena/update/opcache-reset', 3);
+        $probe->check();
+        Kit::check($self->urls() === ['GET http://127.0.0.1:8182/_larena/update/health', 'POST http://127.0.0.1:8182/_larena/update/opcache-reset']
+            && !isset($self->requests[1]->headers[OpcacheResetActivation::HEADER]) && !is_file($site . '/storage/app/larena/update-probe/activation-token.json'),
+            'The self check asks the health address and the activation address without a token; nothing is issued.');
+        $selfAnswers->health = [0, ''];
+        Kit::check(Kit::reason(static fn () => $probe->check()) === 'update_self_health_unreachable', 'An unreachable own address must stop the update.');
+        $selfAnswers->health = [200, $fatal];
+        Kit::check(Kit::reason(static fn () => $probe->check()) === 'update_self_health_unreachable', 'A fatal page at the own address must stop the update.');
+        $selfAnswers->health = [200, $marker];
+        $selfAnswers->reset = [404, '{"message":"Not Found"}'];
+        Kit::check(Kit::reason(static fn () => $probe->check()) === 'update_self_activation_unreachable', 'An activation address that is not this package\'s must stop the update.');
+        $selfAnswers->reset = [200, 'ok'];
+        Kit::check(Kit::reason(static fn () => $probe->check()) === 'update_self_activation_unreachable', 'Any other answer of the activation address must stop the update.');
+        $selfAnswers->reset = [404, '{"status":"not_found"}'];
+        $guarded = new SitePreflight(null, null, 'jobs', $plenty, $probe);
+        $guarded->check($site, 1000);
+        $selfAnswers->health = [0, ''];
+        Kit::check(Kit::reason(static fn () => $guarded->check($site, 1000)) === 'update_self_health_unreachable', 'The preflight runs the self check.');
 
         // One-time activation token: one call, short life, only its hash on disk.
         $tokens = new ActivationTokenStore($site . '/storage/app/larena/update');
@@ -195,6 +245,11 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         $broken = new FakeUpdateHttpClient(static fn (): array => [500, '']);
         Kit::check(Kit::reason(static fn () => (new OpcacheResetActivation($broken, $artisan, $tokens, $bypass, 'https://site.example.test'))->activated($site, new ReleaseSwitch('1.2.0', '1.3.0', true))) === 'update_opcache_reset_failed'
             && !is_file($file), 'A failed activation must fail the step and leave no token behind.');
+        foreach ([[200, '<b>Fatal error</b>: x'], [200, '{"status":"ok"}'], [200, ''], [404, '{"status":"not_found"}']] as [$status, $body]) {
+            $wrong = new FakeUpdateHttpClient(static fn (): array => [$status, $body]);
+            Kit::check(Kit::reason(static fn () => (new OpcacheResetActivation($wrong, $artisan, $tokens, $bypass, 'https://site.example.test'))->activated($site, new ReleaseSwitch('1.2.0', '1.3.0', true))) === 'update_opcache_reset_failed',
+                'Only the reset address\'s own JSON answer counts: ' . $status . ' ' . $body);
+        }
 
         // Audit to the log: same fact rules as the reference audit.
         $logger = new MemoryLogger();

@@ -7,6 +7,8 @@ require_once __DIR__ . '/../Support/UpdateClientFakes.php';
 use Larena\UpdateClient\Enums\UpdateCycleState;
 use Larena\UpdateClient\Laravel\ActivationTokenStore;
 use Larena\UpdateClient\Laravel\Http\OpcacheResetController;
+use Larena\UpdateClient\Laravel\Http\SiteHealthController;
+use Larena\UpdateClient\Laravel\HttpSiteHealth;
 use Larena\UpdateClient\Laravel\OpcacheResetActivation;
 use Larena\UpdateClient\Laravel\SiteUpdateClient;
 use Larena\UpdateClient\Release\ReleaseArchiveExtractor;
@@ -71,9 +73,12 @@ use Illuminate\Http\Request;
     });
     $tokens = new ActivationTokenStore($site . '/storage/app/larena/update');
     $controller = new OpcacheResetController($tokens);
-    $http = new FakeUpdateHttpClient(static function (UpdateHttpRequest $request) use ($published, $controller, $world): array {
+    $http = new FakeUpdateHttpClient(static function (UpdateHttpRequest $request) use ($published, $controller, $world, $pointer): array {
         if (str_starts_with($request->url, 'https://github.com/')) {
             return $published[$request->url] ?? [404, ''];
+        }
+        if ($world->unreachable) {
+            throw new RuntimeException('update_http_failed');
         }
         if ($request->method === 'POST') {
             $response = $controller(Request::create('/x', 'POST', server: ['HTTP_X_LARENA_UPDATE_TOKEN' => $request->headers[OpcacheResetActivation::HEADER] ?? '']));
@@ -81,7 +86,12 @@ use Illuminate\Http\Request;
             return [$response->getStatusCode(), (string) $response->getContent()];
         }
 
-        return $world->failHealth && str_ends_with($request->url, '/up') ? [500, ''] : [200, 'ok'];
+        if (str_ends_with($request->url, HttpSiteHealth::PATH)) {
+            // The new release is broken; the one before it is fine.
+            return $world->failHealth && $pointer->current() === '1.3.0' ? [200, '<b>Fatal error</b>: Uncaught Error'] : [200, (string) (new SiteHealthController())()->getContent()];
+        }
+
+        return [200, 'ok'];
     });
     $pdo = new PDO('sqlite::memory:');
     $pdo->exec(PdoUpdateExecutionStore::schema('sqlite'));
@@ -96,7 +106,15 @@ use Illuminate\Http\Request;
     );
 
     try {
-        // A failing health check: automatic rollback to 1.2.0 with the database from the copy.
+        // The preflight checks the site's own address first: unreachable, the update is refused before any write.
+        $world->unreachable = true;
+        $download = $client->source()->download('1.3.0', $client->installedVersion());
+        $blocked = $client->cycle('user:1')->apply($client->request($download->release, 'user:1', 'update:1.3.0:unreachable'), $download->releaseBytes, $download->signatureBytes, $download->archivePath);
+        Kit::check($blocked->state === UpdateCycleState::Blocked && $blocked->reasonCode === 'update_self_health_unreachable' && $artisan->calls === [] && $pointer->current() === '1.2.0',
+            'An unreachable own address must stop the update before the copy: ' . $blocked->state->value . ' ' . $blocked->reasonCode);
+        $world->unreachable = false;
+
+        // A failing health check (a 200 with a PHP fatal page): automatic rollback to 1.2.0 with the database from the copy.
         $world->failHealth = true;
         $download = $client->source()->download('1.3.0', $client->installedVersion());
         $failed = $client->cycle('user:1')->apply($client->request($download->release, 'user:1', 'update:1.3.0:first'), $download->releaseBytes, $download->signatureBytes, $download->archivePath);

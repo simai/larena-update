@@ -39,11 +39,18 @@ final readonly class OpcacheResetActivation implements ReleaseActivation
         private int $timeoutSeconds = 10,
         private bool $verifyTls = true,
     ) {
-        $siteUrl = rtrim(trim($siteUrl), '/');
-        if (!in_array(strtolower((string) parse_url($siteUrl, PHP_URL_SCHEME)), ['http', 'https'], true) || parse_url($siteUrl, PHP_URL_HOST) === null) {
-            throw new RuntimeException('update_site_url_invalid');
+        $this->siteUrl = HttpSiteHealth::siteUrl($siteUrl);
+    }
+
+    /** The activation address's own answer: 200 with `status: ok` and the boolean `opcache_reset` (every release gives it). */
+    public static function isResetAnswer(\Larena\UpdateClient\Source\UpdateHttpResponse $response): bool
+    {
+        if ($response->status !== 200) {
+            return false;
         }
-        $this->siteUrl = $siteUrl;
+        $data = json_decode($response->body, true, 4);
+
+        return is_array($data) && ($data['status'] ?? null) === 'ok' && is_bool($data['opcache_reset'] ?? null);
     }
 
     public function activated(string $siteRoot, ReleaseSwitch $switch): void
@@ -61,7 +68,7 @@ final readonly class OpcacheResetActivation implements ReleaseActivation
         } finally {
             $this->tokens->forget();
         }
-        if ($response->status !== 200) {
+        if (!self::isResetAnswer($response)) {
             throw new RuntimeException('update_opcache_reset_failed');
         }
 
