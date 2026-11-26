@@ -163,16 +163,25 @@ final class UpdateClientServiceProvider extends ServiceProvider
         if ($registry->has(\Larena\UpdateClient\Laravel\Admin\SiteUpdates::JOB_TYPE)) {
             return;
         }
-        $registry->register(new \Larena\Queue\Runtime\ImmutableJobDescriptor(
-            \Larena\UpdateClient\Laravel\Admin\SiteUpdates::JOB_TYPE, 'update.release.install', 'update.release.install.handler',
-            3600, 1, 60, 3900, \Larena\Queue\Enums\QueuePriority::Maintenance, 'consumer_owned_required', 'larena.update.release.install.payload',
-            [\Larena\Queue\Enums\RuntimeProfile::LaravelWorker, \Larena\Queue\Enums\RuntimeProfile::LarenaDispatcher, \Larena\Queue\Enums\RuntimeProfile::ArtisanTick],
-        ), new \Larena\UpdateClient\Laravel\Admin\ReleaseInstallJobHandler(
+        $registry->register(self::installJobDescriptor(), new \Larena\UpdateClient\Laravel\Admin\ReleaseInstallJobHandler(
             static fn (): ReleaseInstall => new ReleaseInstall($app->make(SiteUpdateClient::class)),
             static function () use ($app): void {
                 $app->make(\Larena\UpdateClient\Laravel\Admin\SiteUpdates::class)->finished();
             },
         ));
+    }
+
+    /**
+     * The install job: one attempt (a failed install rolls back and is not retried by itself), an hour at most, its
+     * lease as long as its timeout.
+     */
+    public static function installJobDescriptor(): \Larena\Queue\Runtime\ImmutableJobDescriptor
+    {
+        return new \Larena\Queue\Runtime\ImmutableJobDescriptor(
+            \Larena\UpdateClient\Laravel\Admin\SiteUpdates::JOB_TYPE, 'update.release.install', 'update.release.install.handler',
+            3600, 1, 60, 3600, \Larena\Queue\Enums\QueuePriority::Maintenance, 'consumer_owned_required', 'larena.update.release.install.payload',
+            [\Larena\Queue\Enums\RuntimeProfile::LaravelWorker, \Larena\Queue\Enums\RuntimeProfile::LarenaDispatcher, \Larena\Queue\Enums\RuntimeProfile::ArtisanTick],
+        );
     }
 
     private static function registerScanJob(\Larena\Queue\Runtime\JobTypeRegistry $registry, Application $app): void

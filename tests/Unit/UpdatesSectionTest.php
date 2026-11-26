@@ -105,6 +105,10 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         $result = $job->handle($context, ['version' => '1.3.0', 'actor' => 'user:admin_identity:1', 'idempotency_key' => 'bad key']);
         Kit::check($cleared === 1 && !$result->succeeded && !$result->retryable, 'A refused install is a failed job without a retry.');
 
+        // The queue accepts the install job's description (one attempt, an hour, its lease within its timeout).
+        $descriptor = \Larena\UpdateClient\Laravel\UpdateClientServiceProvider::installJobDescriptor();
+        Kit::check($descriptor->jobType() === SiteUpdates::JOB_TYPE && $descriptor->maxAttempts() === 1, 'The install job is described for the queue.');
+
         // Words for every reason and state of the page, in both languages.
         foreach (['ru', 'en'] as $locale) {
             $words = require dirname(__DIR__, 2) . '/resources/lang/' . $locale . '/updates.php';
