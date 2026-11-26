@@ -91,6 +91,7 @@
     "delivery:check": "php scripts/check-delivery-manifest.php",
     "evidence:check": "php scripts/check-evidence.php",
     "scope:check": "php tools/larena-scope-check.php",
+    "specs-links:check": "php scripts/check-specs-links.php",
     "quality:gate": [
       "@validate:larena",
       "@delivery:check",
@@ -98,7 +99,8 @@
       "@analyse",
       "@test",
       "@evidence:check",
-      "@scope:check"
+      "@scope:check",
+      "@specs-links:check"
     ]
   },
   "config": {

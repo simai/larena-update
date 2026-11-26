@@ -1,0 +1,16 @@
+{
+  "schema": "larena.specs_links",
+  "schema_version": 1,
+  "repository": "simai/larena-update",
+  "specs_repo": "simai/larena-specs",
+  "specs_commit": "68eda421a7a60aeaad949bac9ef9e261b374aa04",
+  "links": [
+    { "path": "docs/architecture/larena-licensing-updates-purchase.md", "anchor": "delivery", "why": "Delivery variant A: one product build; batches take closed addons and partner modules only." },
+    { "path": "docs/architecture/larena-licensing-updates-purchase.md", "anchor": "updates", "why": "How a site updates: the product cycle with copy and automatic rollback, and addon batches." },
+    { "path": "docs/architecture/larena-licensing-updates-purchase.md", "anchor": "package-standard", "why": "What a package release and its archive must hold." },
+    { "path": "docs/architecture/larena-licensing-updates-purchase.md", "anchor": "licence-end", "why": "After the licence ends, paid updates come only for releases up to updates_until." },
+    { "path": "docs/architecture/2026-11-17-update-client-plan.md", "anchor": "3-как-идёт-обновление-и-откат", "why": "The steps of the update cycle and of the rollback this package runs." },
+    { "path": "docs/architecture/2026-11-17-update-client-plan.md", "anchor": "7-дополнения-и-модули-партнёров-пачкой-решение-владельца-2026-11-25-пересмотр--вариант-a", "why": "Batches of closed packages: list, releases, compatibility, refusals and the server contract." },
+    { "path": "docs/standards/package-repository-structure.md", "anchor": "specs-links", "why": "The documentation rule this file follows and the check in the gate." }
+  ]
+}

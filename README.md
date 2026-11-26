@@ -97,35 +97,32 @@ carried over the restore. Nothing is installed without an operator running
 
 ## Package batches
 
-A new site installs the signed set release; after that each package publishes
-its own releases (owner variant D, 2026-11-25). The update source serves one
-signed list for the product and channel, `<source>/packages/packages.json` and
-`packages.json.sig` (schema `larena.package-list`: `list_version` that only
-grows, `issued_at`, `expires_at`, and every package release as its own signed
-`larena.package-release`: version, `released_at`, `open` or `closed`, archive
-file, sha256 and size, and `requires.larena` / `requires.packages` from the
-package's `module.yaml` `delivery` block). Archives are at
-`<source>/packages/download/<vendor>/<name>/v<version>/<file>`.
+A product updates with its own signed release; closed paid addons and partner modules update in batches (owner
+variant A, 2026-11-25: an open product package in a batch is refused with `update_batch_open_package`). What a batch
+is, its list and releases, the compatibility rule and the refusals are shared rules: see [Shared rules](#shared-rules).
 
-The site chooses the batch itself: for each installed package the newest newer
-release that its licence covers (closed packages ask
-`SiteLicensing::allowsUpdate()`; later releases are held with
-`update_batch_licence_ended`) and that fits the core version and the other
-packages after the batch. Then one cycle runs, the same steps as a release: one
-copy, one new folder `releases/<version>-p<list>-<hash>` (the running release
-with the batch's `vendor/<vendor>/<name>` folders replaced), one switch, the
-health check, and on any failure the same rollback (code first, then the
-database). Before the copy the site checks everything again and refuses with
-`update_batch_incompatible` (naming the package and the rule),
-`update_batch_licence_ended`, `update_batch_signature_invalid` (a list, release or
-archive that does not match its signature) or `update_batch_list_stale` (expired,
-or older than a list this site already saw, kept in
-`storage/app/larena/update/package-list.json`). A package archive must keep the
-installed `autoload` and providers, need no package the release does not have,
-and, with the distribution's authoritative class map, bring no new class file;
-otherwise it needs a set release. The batch release keeps what it installed in
-`.larena-packages.json` and does not carry the set's `.larena-signed/` file list
-(it no longer describes the files), so its file check reports «no list» until
-the integrity checks learn package lists.
+How this package does it: `larena:update:packages` shows the batch, `--apply --actor=<subject_ref>` runs it
+(`--only=vendor/name` for an addon the site does not have yet). The list's highest version seen is kept in
+`storage/app/larena/update/package-list.json`. One cycle runs the release steps: one copy, one new folder
+`releases/<version>-p<list>-<hash>` (the running release with the batch's `vendor/<vendor>/<name>` folders replaced),
+one switch, the health check and on failure the same rollback. The batch release keeps `.larena-signed/` of the
+product, each installed package archive in `.larena-packages/` and the record `.larena-packages.json`; the file
+check lays each package's list over the product's (`Integrity\PackageLayer`). A new addon's classes are written into
+Composer's generated files by `Packages\PackageAutoload` (`psr-4` only, no Composer on the site).
+
+## Admin: «Лицензия и обновления» → «Обновления»
+
+`/admin/updates` (with larena/admin): the running version, the last check of the update sources with what a newer
+release holds («Проверить сейчас» asks them; the page itself never waits for the network), «Установить» and the
+installation journal. Installing goes to the queue as the job `update.release.install`, which runs exactly what
+`larena:update:apply` runs (copy, new code, migrations, switch, health check, automatic rollback); without the queue the
+page names the command. Seeing needs `update.integrity.read`, installing `update.integrity.apply`.
+
+## Shared rules
+
+Shared knowledge lives only in Larena Specs (owner decision 2026-11-26, variant C). `docs/specs-links.json` names the
+Specs sections this package relies on, read at one Specs commit; `composer run specs-links:check` (in the quality gate)
+checks that each still exists and has not changed since. The main source is
+`docs/architecture/larena-licensing-updates-purchase.md`.
 
 Canonical specifications are in `simai/larena-specs`.
