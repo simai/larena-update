@@ -122,9 +122,20 @@ final class UpdateClientServiceProvider extends ServiceProvider
                     self::trustedKeys($app->make(ConfigRepository::class)), self::revokedKeys($app->make(ConfigRepository::class)),
                     product: self::product($app->make(ConfigRepository::class)))));
         }
+        $this->app->bind(\Larena\UpdateClient\Laravel\Admin\SiteUpdates::class, static fn (Application $app): \Larena\UpdateClient\Laravel\Admin\SiteUpdates
+            => new \Larena\UpdateClient\Laravel\Admin\SiteUpdates(
+                static fn (): SiteUpdateClient => $app->make(SiteUpdateClient::class),
+                $app->storagePath('app/larena/update/last-check.json'),
+                self::installDispatcher($app),
+            ));
+        $this->app->bind(\Larena\UpdateClient\Laravel\Admin\UpdatesAdminController::class, static fn (Application $app): \Larena\UpdateClient\Laravel\Admin\UpdatesAdminController
+            => new \Larena\UpdateClient\Laravel\Admin\UpdatesAdminController(
+                $app->make(\Larena\UpdateClient\Laravel\Admin\SiteUpdates::class), $app->make(\Illuminate\Contracts\View\Factory::class),
+                $app->make('translator'), self::allows($app)));
         if (class_exists(\Larena\Queue\Runtime\JobTypeRegistry::class)) {
             $this->app->afterResolving(\Larena\Queue\Runtime\JobTypeRegistry::class, static function (\Larena\Queue\Runtime\JobTypeRegistry $registry, Application $app): void {
                 self::registerScanJob($registry, $app);
+                self::registerInstallJob($registry, $app);
             });
         }
         if (class_exists(\Larena\Scheduler\Runtime\ScheduledOperationRegistry::class)) {
@@ -143,6 +154,27 @@ final class UpdateClientServiceProvider extends ServiceProvider
         }
     }
 
+    /**
+     * «Установить» of the admin's «Обновления»: one attempt, a long timeout (a copy and migrations), run by a worker or the
+     * dispatcher, never by the web request whose code it switches.
+     */
+    private static function registerInstallJob(\Larena\Queue\Runtime\JobTypeRegistry $registry, Application $app): void
+    {
+        if ($registry->has(\Larena\UpdateClient\Laravel\Admin\SiteUpdates::JOB_TYPE)) {
+            return;
+        }
+        $registry->register(new \Larena\Queue\Runtime\ImmutableJobDescriptor(
+            \Larena\UpdateClient\Laravel\Admin\SiteUpdates::JOB_TYPE, 'update.release.install', 'update.release.install.handler',
+            3600, 1, 60, 3900, \Larena\Queue\Enums\QueuePriority::Maintenance, 'consumer_owned_required', 'larena.update.release.install.payload',
+            [\Larena\Queue\Enums\RuntimeProfile::LaravelWorker, \Larena\Queue\Enums\RuntimeProfile::LarenaDispatcher, \Larena\Queue\Enums\RuntimeProfile::ArtisanTick],
+        ), new \Larena\UpdateClient\Laravel\Admin\ReleaseInstallJobHandler(
+            static fn (): ReleaseInstall => new ReleaseInstall($app->make(SiteUpdateClient::class)),
+            static function () use ($app): void {
+                $app->make(\Larena\UpdateClient\Laravel\Admin\SiteUpdates::class)->finished();
+            },
+        ));
+    }
+
     private static function registerScanJob(\Larena\Queue\Runtime\JobTypeRegistry $registry, Application $app): void
     {
         if ($registry->has(IntegrityScanJobHandler::JOB_TYPE)) {
@@ -159,6 +191,24 @@ final class UpdateClientServiceProvider extends ServiceProvider
             max(100, (int) $config->get('update-client.integrity.portion_files', 2000)),
             max(0.5, (float) $config->get('update-client.integrity.portion_seconds', 5)),
         ));
+    }
+
+    /**
+     * Hands «Установить» to the Larena queue, where it is installed with the install job; null otherwise.
+     *
+     * @return (\Closure(string, string, string): string)|null
+     */
+    private static function installDispatcher(Application $app): ?\Closure
+    {
+        if (!class_exists(\Larena\Queue\Runtime\DurableQueueDispatcher::class) || !$app->bound(\Larena\Queue\Runtime\DurableQueueDispatcher::class)
+            || !$app->bound(\Larena\Queue\Runtime\JobTypeRegistry::class)
+            || !$app->make(\Larena\Queue\Runtime\JobTypeRegistry::class)->has(\Larena\UpdateClient\Laravel\Admin\SiteUpdates::JOB_TYPE)) {
+            return null;
+        }
+
+        return static fn (string $version, string $actor, string $key): string => $app->make(\Larena\Queue\Runtime\DurableQueueDispatcher::class)
+            ->dispatch(new \Larena\Queue\Data\DispatchRequest(\Larena\UpdateClient\Laravel\Admin\SiteUpdates::JOB_TYPE,
+                ['version' => $version, 'actor' => $actor, 'idempotency_key' => $key], $key, 'update:' . bin2hex(random_bytes(8))))->jobId;
     }
 
     /** @return array<string,string> */
@@ -206,6 +256,17 @@ final class UpdateClientServiceProvider extends ServiceProvider
         };
     }
 
+    /** «Обновления» of the admin: its read model, and its routes where the admin is installed. */
+    private function bootUpdates(ConfigRepository $config): void
+    {
+        if ((bool) $config->get('update-client.updates.admin.enabled', true) && class_exists(\Larena\Admin\Alerts\AdminAlerts::class)) {
+            $this->app->make('router')
+                ->middleware((array) $config->get('update-client.updates.admin.middleware', ['web']))
+                ->prefix((string) $config->get('update-client.updates.admin.prefix', 'admin/updates'))
+                ->group(__DIR__ . '/../../routes/updates.php');
+        }
+    }
+
     private function bootIntegrity(ConfigRepository $config): void
     {
         $this->loadViewsFrom(__DIR__ . '/../../resources/views', 'larena-update-client');
@@ -245,6 +306,7 @@ final class UpdateClientServiceProvider extends ServiceProvider
             (new IntegrityAccessOperationRegistrar())->register($this->app->make(\Larena\Access\Runtime\AccessOperationRegistry::class));
         }
         $this->bootIntegrity($this->app->make(ConfigRepository::class));
+        $this->bootUpdates($this->app->make(ConfigRepository::class));
         $this->loadMigrationsFrom(__DIR__ . '/../../database/migrations');
         $this->loadRoutesFrom(__DIR__ . '/../../routes/update-client.php');
         $this->publishes([__DIR__ . '/../../config/update-client.php' => $this->app->configPath('update-client.php')], 'larena-update-client-config');

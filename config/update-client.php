@@ -106,4 +106,13 @@ return [
             'middleware' => ['web', 'larena-auth.entry', 'larena-auth.admin-required', 'larena-admin.locale'],
         ],
     ],
+    // «Лицензия и обновления» → «Обновления» in the admin (with larena/admin): the running version, the last check (kept in
+    // storage/app/larena/update/last-check.json), «Установить» through the queue job update.release.install, the journal.
+    'updates' => [
+        'admin' => [
+            'enabled' => true,
+            'prefix' => 'admin/updates',
+            'middleware' => ['web', 'larena-auth.entry', 'larena-auth.admin-required', 'larena-admin.locale'],
+        ],
+    ],
 ];

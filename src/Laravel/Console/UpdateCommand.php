@@ -6,7 +6,6 @@ namespace Larena\UpdateClient\Laravel\Console;
 
 use Illuminate\Console\Command;
 use Larena\UpdateClient\Data\UpdateCycleSnapshot;
-use PDOException;
 use RuntimeException;
 use Throwable;
 
@@ -67,20 +66,7 @@ abstract class UpdateCommand extends Command
     /** @return array<string,mixed> */
     final protected static function cycle(UpdateCycleSnapshot $cycle, ?string $updatedAt = null): array
     {
-        return array_filter([
-            'cycle_id' => $cycle->cycleId,
-            'state' => $cycle->state->value,
-            'from' => $cycle->release?->from,
-            'to' => $cycle->release?->to,
-            'actor' => $cycle->request->actorRef,
-            'completed_steps' => count($cycle->completedSteps),
-            'failed_step' => $cycle->failedStep,
-            'reason' => $cycle->reasonCode,
-            'backup_ref' => $cycle->rollbackBoundary?->snapshotRef,
-            'backward_incompatible_migrations' => $cycle->release?->backwardIncompatibleMigrations,
-            'revision' => $cycle->revision,
-            'updated_at' => $updatedAt,
-        ], static fn (mixed $value): bool => $value !== null);
+        return \Larena\UpdateClient\Laravel\ReleaseInstall::cycle($cycle, $updatedAt);
     }
 
     final protected static function describeState(string $state): string
@@ -120,12 +106,6 @@ abstract class UpdateCommand extends Command
 
     final protected static function reason(Throwable $exception): string
     {
-        if ($exception instanceof PDOException) {
-            // The site database or the `update_cycles` table is missing: `php artisan migrate` creates it.
-            return 'update_store_unavailable';
-        }
-        $message = $exception->getMessage();
-
-        return preg_match('/\A[a-z][a-z0-9_.-]{0,99}\z/D', $message) === 1 ? $message : 'update_operation_failed';
+        return \Larena\UpdateClient\Laravel\ReleaseInstall::reason($exception);
     }
 }

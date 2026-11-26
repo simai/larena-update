@@ -174,7 +174,19 @@
     "src/Release/PreparedRelease.php",
     "src/Release/SignedReleaseCandidate.php",
     "tests/Unit/PackageBatchCycleTest.php",
-    "tests/Unit/PackageIntegrityTest.php"
+    "tests/Unit/PackageIntegrityTest.php",
+    "docs/specs-links.json",
+    "resources/lang/en/updates.php",
+    "resources/lang/ru/updates.php",
+    "resources/views/updates/index.blade.php",
+    "routes/updates.php",
+    "scripts/check-specs-links.php",
+    "src/Laravel/Admin/ReleaseInstallJobHandler.php",
+    "src/Laravel/Admin/SiteUpdates.php",
+    "src/Laravel/Admin/UpdatesAdminController.php",
+    "src/Laravel/ReleaseInstall.php",
+    "tests/Unit/SpecsLinksCheckTest.php",
+    "tests/Unit/UpdatesSectionTest.php"
   ],
   "forbidden_files": [
     "resources/*",

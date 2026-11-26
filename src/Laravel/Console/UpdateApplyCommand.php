@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace Larena\UpdateClient\Laravel\Console;
 
 use Larena\UpdateClient\Enums\UpdateCycleState;
+use Larena\UpdateClient\Laravel\ReleaseInstall;
 use Larena\UpdateClient\Laravel\SiteUpdateClient;
 use RuntimeException;
-use Throwable;
 
 /**
  * Downloads one signed release, checks it, and runs the update cycle with automatic rollback
@@ -34,31 +34,8 @@ final class UpdateApplyCommand extends UpdateCommand
             } elseif (preg_match('/\A[A-Za-z0-9][A-Za-z0-9:._-]{2,127}\z/D', $key) !== 1) {
                 throw new RuntimeException('update_idempotency_key_invalid');
             }
-            $installed = $client->installedVersion();
-            $source = $client->source();
-            try {
-                $download = $source->download($version, $installed, $client->channel());
-            } catch (Throwable $exception) {
-                return ['status' => 'failed', 'reason' => self::reason($exception), 'installed' => $installed, 'source_errors' => $source->errors()];
-            }
 
-            $preflight = $client->preflight();
-            $cycle = $client->cycle($actor, $preflight)->apply(
-                $client->request($download->release, $actor, $key),
-                $download->releaseBytes,
-                $download->signatureBytes,
-                $download->archivePath,
-                $client->channel(),
-            );
-            if ($cycle->state === UpdateCycleState::Completed) {
-                try {
-                    $source->forget($version);
-                } catch (Throwable) {
-                    // A leftover download folder is cleaned on the next run; the update itself is done.
-                }
-            }
-
-            return ['status' => $cycle->state->value, 'source' => $download->source, 'idempotency_key' => $key, 'notes' => $preflight->notes()] + self::cycle($cycle);
+            return (new ReleaseInstall($client))->install($version, $actor, $key);
         }, static function (array $payload): array {
             $lines = ['Update ' . ($payload['from'] ?? '?') . ' → ' . ($payload['to'] ?? '?') . ': ' . self::describeState((string) $payload['status']) . '.'];
             if (isset($payload['failed_step'])) {
