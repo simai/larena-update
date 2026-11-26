@@ -112,6 +112,10 @@ use Illuminate\Http\Request;
         $blocked = $client->cycle('user:1')->apply($client->request($download->release, 'user:1', 'update:1.3.0:unreachable'), $download->releaseBytes, $download->signatureBytes, $download->archivePath);
         Kit::check($blocked->state === UpdateCycleState::Blocked && $blocked->reasonCode === 'update_self_health_unreachable' && $artisan->calls === [] && $pointer->current() === '1.2.0',
             'An unreachable own address must stop the update before the copy: ' . $blocked->state->value . ' ' . $blocked->reasonCode);
+        // The same refusal through the install the command and the admin run names both versions, never «? → ?».
+        $refused = (new \Larena\UpdateClient\Laravel\ReleaseInstall($client))->install('1.3.0', 'user:1', 'update:1.3.0:unreachable-words');
+        Kit::check($refused['status'] === UpdateCycleState::Blocked->value && ($refused['from'] ?? null) === '1.2.0' && ($refused['to'] ?? null) === '1.3.0',
+            'A refused install names the installed and the requested version: ' . json_encode($refused));
         $world->unreachable = false;
 
         // A failing health check (a 200 with a PHP fatal page): automatic rollback to 1.2.0 with the database from the copy.

@@ -53,7 +53,11 @@ final readonly class ReleaseInstall
             }
         }
 
-        return ['status' => $cycle->state->value, 'source' => $download->source, 'idempotency_key' => $idempotencyKey, 'notes' => $preflight->notes()] + self::cycle($cycle);
+        // A cycle refused before it read the release (a preflight refusal) names no versions: the installed and the
+        // requested ones are said instead, so the refusal reads «Update 1.7.2 → 1.7.3», never «? → ?».
+        return ['status' => $cycle->state->value, 'source' => $download->source, 'idempotency_key' => $idempotencyKey, 'notes' => $preflight->notes()]
+            + self::cycle($cycle)
+            + ['from' => $installed, 'to' => $version];
     }
 
     /** @return array<string,mixed> one cycle as the commands and the admin journal show it */
