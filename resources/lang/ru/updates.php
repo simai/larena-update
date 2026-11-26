@@ -55,6 +55,9 @@ return [
         'update_already_running' => 'Установка уже идёт: дождитесь её конца.',
         'update_queue_unavailable' => 'На сайте нет очереди задач: установите из консоли (larena:update:apply).',
         'update_actor_required' => 'Не удалось понять, кто устанавливает: войдите заново.',
+        'release_current_missing' => 'Сайт установлен не из выпуска (копия для разработки или установка из Git): обновлять его здесь нельзя.',
+        'release_version_unknown' => 'Не удалось прочитать версию текущего выпуска сайта.',
+        'update_store_unavailable' => 'Нет таблицы журнала обновлений: выполните php artisan migrate.',
         'other' => 'Не получилось. Подробности — в журнале и в larena:update:status.',
     ],
 ];

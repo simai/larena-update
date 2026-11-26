@@ -41,7 +41,7 @@ final readonly class UpdatesAdminController
             'view' => $view,
             'notes' => is_string($notes[$locale] ?? null) ? $notes[$locale] : (is_string($notes['en'] ?? null) ? $notes['en'] : (string) (array_values($notes)[0] ?? '')),
             'canAct' => ($this->allows)($request, IntegrityAccessOperationRegistrar::APPLY),
-            'notice' => $request->hasSession() ? $request->session()->get(self::NOTICE) : null,
+            'notice' => $request->hasSession() ? $request->session()->pull(self::NOTICE) : null,
             'state' => fn (string $state): string => $this->words('states.' . $state, $state),
             'reason' => fn (?string $code): string => $this->reason($code),
         ]);
@@ -65,7 +65,7 @@ final readonly class UpdatesAdminController
     private function back(Request $request, string $notice): RedirectResponse
     {
         if ($request->hasSession()) {
-            $request->session()->flash(self::NOTICE, $notice);
+            $request->session()->put(self::NOTICE, $notice); // kept until the page reads it: a request of the open page must not use it up
         }
 
         return new RedirectResponse(route('larena.update-client.updates.index', [], false));

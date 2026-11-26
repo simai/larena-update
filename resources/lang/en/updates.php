@@ -55,6 +55,9 @@ return [
         'update_already_running' => 'An installation is already running: wait for it to end.',
         'update_queue_unavailable' => 'The site has no job queue: install from the console (larena:update:apply).',
         'update_actor_required' => 'It is not clear who installs: sign in again.',
+        'release_current_missing' => 'The site is not installed from a release (a development copy or a Git checkout): it cannot be updated here.',
+        'release_version_unknown' => 'The version of the current site release could not be read.',
+        'update_store_unavailable' => 'The update journal table is missing: run php artisan migrate.',
         'other' => 'It did not work. Details are in the journal and in larena:update:status.',
     ],
 ];
