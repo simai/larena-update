@@ -192,7 +192,11 @@
     "src/Laravel/SelfAddressCheck.php",
     "src/Source/ReleaseListFreshness.php",
     "src/Source/ReleaseListState.php",
-    "tests/Unit/ReleaseListFreshnessTest.php"
+    "tests/Unit/ReleaseListFreshnessTest.php",
+    "src/Source/ReleaseRevoked.php",
+    "src/Source/RevokedReleaseState.php",
+    "src/Laravel/Admin/UpdatesAdminAlertSource.php",
+    "tests/Unit/RevokedReleaseTest.php"
   ],
   "forbidden_files": [
     "resources/*",

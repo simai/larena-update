@@ -59,7 +59,7 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         // Site key: in the Authorization header of every request to the update server, never in an address.
         $http = FakeUpdateHttpClient::serving($latest($server, $larena, $larenaSig));
         $client(['sources' => [$server], 'site_key' => $siteKey], $http)->source()->latest('1.2.0');
-        Kit::check(count($http->requests) === 2, 'A check reads the description and its signature.');
+        Kit::check(count($http->requests) === 3 && str_ends_with($http->requests[2]->url, '/download/v1.2.0/release.json'), 'A check reads the description, its signature and whether the installed version is revoked.');
         foreach ($http->requests as $request) {
             Kit::check(($request->headers['Authorization'] ?? null) === 'Bearer ' . $siteKey, 'Every request to the update server must carry the site key.');
             Kit::check(!$leaks($request->url), 'The site key must never be in an address.');
@@ -69,7 +69,7 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         foreach ([[], ['site_key' => ''], ['site_key' => null]] as $config) {
             $http = FakeUpdateHttpClient::serving($latest($server, $larena, $larenaSig));
             $client(['sources' => [$server]] + $config, $http)->source()->latest('1.2.0');
-            Kit::check(array_map(static fn (UpdateHttpRequest $request): array => $request->headers, $http->requests) === [[], []], 'Without a site key requests must carry no header.');
+            Kit::check(array_map(static fn (UpdateHttpRequest $request): array => $request->headers, $http->requests) === [[], [], []], 'Without a site key requests must carry no header.');
         }
 
         // github.com public releases never see the key; the update server after it still does.

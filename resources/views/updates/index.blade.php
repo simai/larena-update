@@ -12,6 +12,30 @@
             {!! $C::alert($notice, 'info') !!}
         @endif
 
+        {{-- The running version is revoked (matrix 5): danger, with the way out — install the offered version or check again. --}}
+        @if ($view['revoked'])
+            <section class="larena-panel larena-panel-padded" aria-labelledby="updates-revoked-heading" data-updates-part="revoked" data-updates-revoked="{{ $view['revoked']['version'] }}">
+                <h2 id="updates-revoked-heading" class="larena-visually-hidden">{{ __('larena-update-client::updates.revoked.heading') }}</h2>
+                {!! $C::alert(trim(__('larena-update-client::updates.revoked.text', ['version' => $view['revoked']['version']]) . ' ' . ($view['revoked']['fixed_in'] ? __('larena-update-client::updates.revoked.fixed_in', ['version' => $view['revoked']['fixed_in']]) : '')), 'danger', __('larena-update-client::updates.revoked.heading')) !!}
+                @if ($canAct)
+                    <div class="larena-page-actions m-top-1">
+                        @if (($check['status'] ?? null) === 'available' && ! $view['queued'] && ! $view['unfinished'])
+                            <form method="post" action="{{ route('larena.update-client.updates.install', [], false) }}" data-larena-tool-form data-updates-revoked-install>
+                                @csrf
+                                <input type="hidden" name="version" value="{{ $check['version'] }}">
+                                {!! $C::submit(__('larena-update-client::updates.new.install', ['version' => $check['version']]), 'primary') !!}
+                            </form>
+                        @else
+                            <form method="post" action="{{ route('larena.update-client.updates.check', [], false) }}" data-larena-tool-form>
+                                @csrf
+                                {!! $C::submit(__('larena-update-client::updates.new.check_now'), 'primary') !!}
+                            </form>
+                        @endif
+                    </div>
+                @endif
+            </section>
+        @endif
+
         {{-- What the site runs now. --}}
         <section class="larena-panel larena-panel-padded" aria-labelledby="updates-current-heading" data-updates-part="current">
             <h2 id="updates-current-heading">{{ __('larena-update-client::updates.current.heading') }}</h2>

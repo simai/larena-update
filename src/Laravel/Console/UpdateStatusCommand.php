@@ -39,11 +39,13 @@ final class UpdateStatusCommand extends UpdateCommand
             try {
                 $installed = $client->installedVersion();
                 $versionReason = null;
+                $revoked = $client->revokedState()->current($installed);
             } catch (Throwable $exception) {
                 // A release without a known version (installed by an installer that wrote no `.larena-release`) is
                 // still shown; updates are refused until it has one.
                 $installed = null;
                 $versionReason = self::reason($exception);
+                $revoked = null;
             }
 
             return array_filter([
@@ -59,6 +61,7 @@ final class UpdateStatusCommand extends UpdateCommand
                 'unfinished_cycle' => $unfinished === null ? null : $unfinished->cycleId,
                 'store_reason' => $storeReason,
                 'cycles' => $cycles,
+                'revoked' => $revoked,
             ], static fn (mixed $value): bool => $value !== null);
         }, static function (array $payload): array {
             $lines = [
@@ -68,6 +71,10 @@ final class UpdateStatusCommand extends UpdateCommand
                 'Update sources: ' . ((array) $payload['sources'] === [] ? 'none configured' : implode(', ', (array) $payload['sources'])) . '.',
                 'Trusted release keys: ' . ((array) $payload['trusted_key_ids'] === [] ? 'none configured — updates are refused' : implode(', ', (array) $payload['trusted_key_ids'])) . '.',
             ];
+            if (is_array($payload['revoked'] ?? null)) {
+                $lines[] = 'This version is revoked by the update server — update urgently'
+                    . (is_string($payload['revoked']['fixed_in'] ?? null) ? ' (fixed in ' . $payload['revoked']['fixed_in'] . ').' : '.');
+            }
             if (isset($payload['store_reason'])) {
                 $lines[] = 'Update history is not readable: ' . $payload['store_reason'] . ($payload['store_reason'] === 'update_store_unavailable' ? ' (run php artisan migrate).' : '.');
             }

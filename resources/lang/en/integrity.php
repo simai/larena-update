@@ -223,6 +223,7 @@ return [
         'update_batch_list_invalid' => 'the package list is not valid.',
         'update_release_list_stale' => 'the release list is out of date (expired, or older than one this site already saw): this happens when an update server answer was replaced or held back. Check again later; nothing on the site changed.',
         'update_release_list_invalid' => 'the release description from the update server is incomplete: it has no list number or expiry date. Nothing on the site changed.',
+        'update_release_revoked' => 'this version was revoked by the update server: it cannot be installed. Check for updates again.',
         'update_release_state_unreadable' => 'could not read which release list this site saw last (storage/app/larena/update/release-list.json).',
         'update_release_state_unwritable' => 'cannot record which release list this site saw last: check the permissions of storage/app/larena/update.',
         'update_batch_list_missing' => 'the update server has no package list.',

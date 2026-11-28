@@ -19,7 +19,9 @@ use Throwable;
  * - «Установить»: the release the last check offered, handed to the queue as the job `update.release.install`, which runs
  *   exactly `larena:update:apply` ({@see ReleaseInstall}: copy, new code, migrations, switch, health check, automatic
  *   rollback). A web request never switches the code it runs on. Without a queue the page names the command;
- * - the installation journal: the last cycles of the update store, and the cycle not finished.
+ * - the installation journal: the last cycles of the update store, and the cycle not finished;
+ * - «Эта версия отозвана — обновите срочно» (matrix 5): the update server answered 410 for the running version at the
+ *   last check ({@see \Larena\UpdateClient\Source\RevokedReleaseState}); a newer installed version clears it.
  *
  * Reason codes only: never a key, a source answer or a path.
  */
@@ -40,7 +42,8 @@ final readonly class SiteUpdates
 
     /**
      * @return array{installed:?string, installed_reason:?string, channel:?string, sources:int, check:?array<string,mixed>,
-     *     queued:?array<string,mixed>, cycles:list<array<string,mixed>>, unfinished:?string, store_reason:?string, queue:bool}
+     *     queued:?array<string,mixed>, cycles:list<array<string,mixed>>, unfinished:?string, store_reason:?string, queue:bool,
+     *     revoked:?array{version:string, fixed_in:?string, seen_at:string}}
      */
     public function overview(int $limit = 10): array
     {
@@ -51,12 +54,14 @@ final readonly class SiteUpdates
         $cycles = [];
         $unfinished = null;
         $storeReason = null;
+        $revoked = null;
         try {
             $client = ($this->client)();
             $channel = $client->channel();
             $sources = count($client->sources());
             try {
                 $installed = $client->installedVersion();
+                $revoked = $client->revokedState()->current($installed);
             } catch (Throwable $exception) {
                 $installedReason = ReleaseInstall::reason($exception);
             }
@@ -84,6 +89,7 @@ final readonly class SiteUpdates
             'unfinished' => $unfinished,
             'store_reason' => $storeReason,
             'queue' => $this->dispatch !== null,
+            'revoked' => $revoked,
         ];
     }
 

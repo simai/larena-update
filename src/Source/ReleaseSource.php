@@ -50,6 +50,13 @@ use Throwable;
  * not lower than the highest this site saw for the product and channel ({@see ReleaseListState}) and its `expires_at`
  * not passed, else `update_release_list_stale`; the update server must carry both, github.com and a folder may omit
  * them. A frozen answer is refused even when it is «not newer»: an old description must not hide a newer release.
+ *
+ * A revoked release (matrix 5): the update server answers 410 with `{"code":"release_revoked","version","fixed_in"}`.
+ * That is a typed outcome ({@see ReleaseRevoked}, reason `update_release_revoked`, {@see revoked()}), never installed.
+ * After a check answered, a site with a {@see RevokedReleaseState} also asks the same update server for the installed
+ * version's own description (`<source>/download/<tag>/release.json`, not github.com, not a folder): a 410 there marks
+ * «the installed version is revoked» for the page and the alert bar; a newer installed version clears it. That
+ * question never fails a check.
  */
 final class ReleaseSource
 {
@@ -63,6 +70,8 @@ final class ReleaseSource
 
     /** @var array<string,string> source => reason code of its last failure */
     private array $errors = [];
+
+    private ?ReleaseRevoked $revoked = null;
 
     private ?string $siteKey;
 
@@ -79,6 +88,7 @@ final class ReleaseSource
         #[\SensitiveParameter] ?string $siteKey = null,
         private readonly ?ReleaseListState $lists = null,
         private readonly ?Closure $clock = null,
+        private readonly ?RevokedReleaseState $revocations = null,
     ) {
         $siteKey = $siteKey === null ? '' : trim($siteKey);
         // A bearer token: visible ASCII only, so it can never break the header or the request line.
@@ -116,6 +126,12 @@ final class ReleaseSource
         return $this->errors;
     }
 
+    /** The revocation the last call met (a 410 of the update server), or null. */
+    public function revoked(): ?ReleaseRevoked
+    {
+        return $this->revoked;
+    }
+
     /**
      * The newest release the first answering source offers, or null when the installed version is already the newest
      * one (a verified description that is not newer). Only the description and its signature are read.
@@ -123,38 +139,78 @@ final class ReleaseSource
     public function latest(string $installedVersion, string $channel = 'stable'): ?SourceRelease
     {
         $this->errors = [];
+        $this->revoked = null;
         foreach ($this->sources as $source) {
             try {
-                [$bytes, $signature] = $this->description($source, $this->latestBase($source));
-                // Signature first, then freshness, then «newer»: a frozen answer is stale even when it is not newer.
-                $this->verifier->signedBy($bytes, $signature);
-                $product = $this->verifier->product();
-                $listVersion = ReleaseListFreshness::check($bytes, ReleaseListFreshness::required($source), $this->now(),
-                    $this->lists?->seen($product, $channel) ?? 0);
-                try {
-                    $release = $this->verifier->verify($bytes, $signature, $installedVersion, $channel);
-                } catch (RuntimeException $exception) {
-                    if ($exception->getMessage() === 'release_not_newer' && $listVersion !== null) {
-                        // Product and channel held: the number is this product's.
-                        $this->lists?->see($product, $channel, $listVersion);
-                    }
-                    throw $exception;
-                }
-                if ($listVersion !== null) {
-                    $this->lists?->see($product, $channel, $listVersion);
-                }
-
-                return new SourceRelease($source, $release);
+                $offer = $this->latestFrom($source, $installedVersion, $channel);
             } catch (Throwable $exception) {
-                $reason = self::reason($exception, 'update_source_failed');
-                if ($reason === 'release_not_newer') {
-                    return null;
-                }
-                $this->errors[$source] = $reason;
+                $this->errors[$source] = self::reason($exception, 'update_source_failed');
+                continue;
             }
+            $this->installedRevoked($source, $installedVersion);
+
+            return $offer;
         }
 
         throw new RuntimeException($this->failure());
+    }
+
+    /** One source's newest release; null when it is not newer than the installed one. */
+    private function latestFrom(string $source, string $installedVersion, string $channel): ?SourceRelease
+    {
+        [$bytes, $signature] = $this->description($source, $this->latestBase($source));
+        // Signature first, then freshness, then «newer»: a frozen answer is stale even when it is not newer.
+        $this->verifier->signedBy($bytes, $signature);
+        $product = $this->verifier->product();
+        $listVersion = ReleaseListFreshness::check($bytes, ReleaseListFreshness::required($source), $this->now(),
+            $this->lists?->seen($product, $channel) ?? 0);
+        try {
+            $release = $this->verifier->verify($bytes, $signature, $installedVersion, $channel);
+        } catch (RuntimeException $exception) {
+            if ($exception->getMessage() !== 'release_not_newer') {
+                throw $exception;
+            }
+            $release = null; // product and channel held: the number is this product's
+        }
+        if ($listVersion !== null) {
+            $this->lists?->see($product, $channel, $listVersion);
+        }
+
+        return $release === null ? null : new SourceRelease($source, $release);
+    }
+
+    /**
+     * Asks the update server that answered a check whether the installed version is revoked (its description answers
+     * 410), and keeps the answer in {@see RevokedReleaseState}. Without that state, for github.com and for a folder,
+     * nothing is asked. Any failure of this question is no answer: the check stands.
+     */
+    private function installedRevoked(string $source, string $installedVersion): void
+    {
+        if ($this->revocations === null) {
+            return;
+        }
+        $this->revocations->settle($installedVersion);
+        if (self::folder($source) !== null || self::isGitHub($source)
+            || preg_match('/\A(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,7})\z/D', $installedVersion) !== 1) {
+            return;
+        }
+        try {
+            $response = $this->http->send(new UpdateHttpRequest(
+                'GET', $source . '/download/' . rawurlencode($this->tagPrefix . $installedVersion) . '/release.json', $this->headers($source),
+                timeoutSeconds: min(60, $this->timeoutSeconds), maxBytes: self::MAX_DESCRIPTION_BYTES, followRedirects: true,
+                connectTimeoutSeconds: $this->connectTimeoutSeconds,
+            ));
+        } catch (Throwable) {
+            return;
+        }
+        if ($response->status !== 410) {
+            return;
+        }
+        $revoked = ReleaseRevoked::fromAnswer($response->body, $installedVersion);
+        if ($revoked->version === $installedVersion) {
+            $this->revoked = $revoked;
+            $this->revocations->record($installedVersion, $revoked, $this->now());
+        }
     }
 
     /** Fetches and checks one exact version; see the class description for the order of checks. */
@@ -164,10 +220,14 @@ final class ReleaseSource
             throw new RuntimeException('release_version_invalid');
         }
         $this->errors = [];
+        $this->revoked = null;
         foreach ($this->sources as $source) {
             try {
                 return $this->downloadFrom($source, $version, $installedVersion, $channel);
             } catch (Throwable $exception) {
+                if ($exception instanceof ReleaseRevoked) {
+                    $this->revoked = $exception;
+                }
                 $this->errors[$source] = self::reason($exception, 'update_source_failed');
             }
         }
@@ -244,7 +304,7 @@ final class ReleaseSource
         $base = $folder !== null
             ? $folder . '/download/' . $this->tagPrefix . $version . '/'
             : $source . '/download/' . rawurlencode($this->tagPrefix . $version) . '/';
-        [$bytes, $signature] = $this->description($source, $base);
+        [$bytes, $signature] = $this->description($source, $base, $version);
         $release = $this->verifier->verify($bytes, $signature, $installedVersion, $channel);
         if ($release->version !== $version) {
             throw new RuntimeException('update_release_version_differs');
@@ -262,7 +322,7 @@ final class ReleaseSource
             // before the archive is requested. An older release without `files` has no list (files null).
             $list = $folder !== null
                 ? self::readFile($base . $release->files->file, $release->files->bytes)
-                : $this->fetch($source, $base . rawurlencode($release->files->file), $release->files->bytes);
+                : $this->fetch($source, $base . rawurlencode($release->files->file), $release->files->bytes, $version);
             FileList::forRelease($release, $list);
             $written[$release->files->file] = $list;
         }
@@ -283,6 +343,9 @@ final class ReleaseSource
                 ));
                 if (!$response->successful()) {
                     ReleaseDirectory::remove($archive);
+                    if ($response->status === 410) {
+                        throw ReleaseRevoked::fromAnswer($response->body, $version);
+                    }
                     throw new RuntimeException($this->refusal($source, $response, 'update_download_failed'));
                 }
             }
@@ -297,12 +360,15 @@ final class ReleaseSource
         return new DownloadedRelease($source, $release, $bytes, $signature, $archive);
     }
 
-    private function fetch(string $source, string $url, int $limit): string
+    private function fetch(string $source, string $url, int $limit, ?string $version = null): string
     {
         $response = $this->http->send(new UpdateHttpRequest(
             'GET', $url, $this->headers($source), timeoutSeconds: min(120, $this->timeoutSeconds), maxBytes: $limit,
             followRedirects: true, connectTimeoutSeconds: $this->connectTimeoutSeconds,
         ));
+        if ($response->status === 410) {
+            throw ReleaseRevoked::fromAnswer($response->body, $version);
+        }
         if (!$response->successful()) {
             throw new RuntimeException($response->status === 404 ? 'release_files_missing' : $this->refusal($source, $response, 'update_download_failed'));
         }
@@ -310,8 +376,11 @@ final class ReleaseSource
         return $response->body;
     }
 
-    /** @return array{0:string,1:string} release.json bytes, release.json.sig bytes */
-    private function description(string $source, string $base): array
+    /**
+     * @param string|null $version the exact version asked for (null: the newest)
+     * @return array{0:string,1:string} release.json bytes, release.json.sig bytes
+     */
+    private function description(string $source, string $base, ?string $version = null): array
     {
         $files = [];
         foreach (['release.json' => self::MAX_DESCRIPTION_BYTES, 'release.json.sig' => self::MAX_SIGNATURE_BYTES] as $name => $limit) {
@@ -323,6 +392,9 @@ final class ReleaseSource
                 'GET', $base . $name, $this->headers($source), timeoutSeconds: min(60, $this->timeoutSeconds), maxBytes: $limit,
                 followRedirects: true, connectTimeoutSeconds: $this->connectTimeoutSeconds,
             ));
+            if ($response->status === 410) {
+                throw ReleaseRevoked::fromAnswer($response->body, $version);
+            }
             if (!$response->successful()) {
                 throw new RuntimeException($response->status === 404 ? 'update_release_not_found' : $this->refusal($source, $response, 'update_download_failed'));
             }

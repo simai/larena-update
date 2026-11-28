@@ -152,6 +152,8 @@ final class UpdateClientServiceProvider extends ServiceProvider
             $this->callAfterResolving(\Larena\Admin\Alerts\AdminAlerts::class, static function (\Larena\Admin\Alerts\AdminAlerts $alerts, Application $app): void {
                 $alerts->register('larena/update:integrity', new \Larena\UpdateClient\Laravel\Integrity\IntegrityAdminAlertSource(
                     $app->make(SiteIntegrity::class), $app->make('translator'), self::allows($app)));
+                $alerts->register('larena/update:updates', new \Larena\UpdateClient\Laravel\Admin\UpdatesAdminAlertSource(
+                    static fn (): SiteUpdateClient => $app->make(SiteUpdateClient::class), $app->make('translator'), self::allows($app)));
             });
         }
     }

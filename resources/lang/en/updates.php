@@ -30,6 +30,12 @@ return [
         'queued' => 'Installing :version is queued. Its progress and result appear in the journal below.',
         'no_queue' => 'The site has no job queue: install from the console with php artisan larena:update:apply :version --actor=<your subject_ref>.',
     ],
+    'revoked' => [
+        'heading' => 'This version is revoked — update urgently',
+        'text' => 'The update server revoked version :version, which this site runs now. Install a newer version.',
+        'fixed_in' => 'Fixed in :version.',
+        'action' => 'Update',
+    ],
     'journal' => [
         'heading' => 'Installation journal',
         'none' => 'No installations yet.',

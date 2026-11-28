@@ -32,6 +32,7 @@ use Larena\UpdateClient\Release\VerifiedRelease;
 use Larena\UpdateClient\Runtime\PdoUpdateExecutionStore;
 use Larena\UpdateClient\Source\ReleaseListState;
 use Larena\UpdateClient\Source\ReleaseSource;
+use Larena\UpdateClient\Source\RevokedReleaseState;
 use Larena\UpdateClient\Source\UpdateHttpClient;
 use PDO;
 use Psr\Log\LoggerInterface;
@@ -200,7 +201,14 @@ final readonly class SiteUpdateClient
             is_string($this->config['tag_prefix'] ?? null) ? $this->config['tag_prefix'] : 'v',
             is_string($this->config['site_key'] ?? null) ? $this->config['site_key'] : null,
             $this->releaseListState(),
+            revocations: $this->revokedState(),
         );
+    }
+
+    /** «The installed version is revoked», as the update server last said it, in the shared storage. */
+    public function revokedState(): RevokedReleaseState
+    {
+        return RevokedReleaseState::forSite($this->siteRoot());
     }
 
     /** The highest release description number seen per product and channel, in the shared storage. */

@@ -25,8 +25,11 @@ final class UpdateCheckCommand extends UpdateCommand
             } catch (Throwable $exception) {
                 return ['status' => 'failed', 'reason' => self::reason($exception), 'installed' => $installed, 'source_errors' => $source->errors()];
             }
+            $revoked = $source->revoked();
+            $revoked = $revoked !== null && $revoked->version === $installed ? ['version' => $revoked->version, 'fixed_in' => $revoked->fixedIn] : null;
             if ($offer === null) {
-                return ['status' => 'up_to_date', 'installed' => $installed, 'channel' => $client->channel(), 'source_errors' => $source->errors()];
+                return array_filter(['status' => 'up_to_date', 'installed' => $installed, 'channel' => $client->channel(), 'source_errors' => $source->errors(),
+                    'revoked' => $revoked], static fn (mixed $value): bool => $value !== null);
             }
             $release = $offer->release;
 
@@ -43,12 +46,17 @@ final class UpdateCheckCommand extends UpdateCommand
                 'key_id' => $release->keyId,
                 'notes' => $release->notes,
                 'source_errors' => $source->errors(),
-            ];
+            ] + ($revoked === null ? [] : ['revoked' => $revoked]);
         }, static function (array $payload): array {
+            $revoked = is_array($payload['revoked'] ?? null)
+                ? ['This version ' . $payload['installed'] . ' is revoked by the update server — update urgently'
+                    . (is_string($payload['revoked']['fixed_in'] ?? null) ? ' (fixed in ' . $payload['revoked']['fixed_in'] . ').' : '.')]
+                : [];
             if ($payload['status'] === 'up_to_date') {
-                return ['Larena ' . $payload['installed'] . ' is the newest release on the ' . $payload['channel'] . ' channel.'];
+                return [...$revoked, 'Larena ' . $payload['installed'] . ' is the newest release on the ' . $payload['channel'] . ' channel.'];
             }
             $lines = [
+                ...$revoked,
                 'A newer release is available: ' . $payload['version'] . ' (installed ' . $payload['installed'] . ').',
                 'Source: ' . $payload['source'] . ', signed by key ' . $payload['key_id'] . '.',
             ];

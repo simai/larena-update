@@ -95,6 +95,12 @@ seen per product and channel is kept in `storage/app/larena/update/release-list.
 `update_release_list_stale`, a missing or malformed field `update_release_list_invalid`, both before any write and
 even when the answer is «not newer». github.com release pages and `file://` folders may omit the fields (they cannot
 be signed again every day, and nobody on the network can freeze a folder); the update server must carry them.
+A revoked release: the update server answers 410 `{"code":"release_revoked","version","fixed_in"}`
+(`Source\ReleaseRevoked`, reason `update_release_revoked`), never installed. After a check the site asks the same
+update server for the installed version's `download/v<version>/release.json`; a 410 there is kept in
+`storage/app/larena/update/revoked.json` and shown as the danger «Эта версия отозвана — обновите срочно» (with
+«Исправлено в X») on «Обновления» and in the admin's alert bar (`update-client:updates:revoked`), in
+`larena:update:check` and `larena:update:status`, until a newer version is installed.
 `LARENA_UPDATE_PRODUCT` (default `larena`; `larena-panel` for the panel) is the
 `product` a signed `release.json` must name, for updates and integrity checks.
 `files.json` (schema `larena.release-files`) lists every path of the release
