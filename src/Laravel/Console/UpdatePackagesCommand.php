@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Larena\UpdateClient\Laravel\Console;
 
 use DateTimeImmutable;
+use Larena\Licensing\Site\SiteDataAccess;
 use Larena\UpdateClient\Enums\UpdateCycleState;
 use Larena\UpdateClient\Laravel\SiteUpdateClient;
 use Larena\UpdateClient\Packages\InstalledPackages;
@@ -21,7 +22,8 @@ use Throwable;
  * package list offers this site: the packages that would change, the closed packages the licence does not cover any
  * more, and why a batch cannot go. With `--apply` it downloads the archives and installs the batch in one update cycle
  * (copy, new release folder, switch, health check, automatic rollback). `larena:update:status` and
- * `larena:update:rollback` see the batch as one cycle.
+ * `larena:update:rollback` see the batch as one cycle. An addon installed again after `larena:update:remove` (same or
+ * newer version) is taken off larena/licensing's «removed, data kept» list, so editing comes back on the same data.
  */
 final class UpdatePackagesCommand extends UpdateCommand
 {
@@ -34,9 +36,9 @@ final class UpdatePackagesCommand extends UpdateCommand
 
     protected $description = 'Show or install the package updates this site may take, as one batch with one copy and automatic rollback.';
 
-    public function handle(SiteUpdateClient $client): int
+    public function handle(SiteUpdateClient $client, SiteDataAccess $data): int
     {
-        return $this->respond(function () use ($client): array {
+        return $this->respond(function () use ($client, $data): array {
             $apply = (bool) $this->option('apply');
             $actor = $apply ? $this->actor() : null;
             $only = array_values(array_filter(array_map('trim', (array) $this->option('only')), static fn (string $name): bool => $name !== ''));
@@ -87,6 +89,11 @@ final class UpdatePackagesCommand extends UpdateCommand
                 $client->channel(),
             );
             if ($cycle->state === UpdateCycleState::Completed) {
+                foreach ($plan->releases as $package) {
+                    if (!isset($installed->versions[$package->package])) {
+                        $data->addonInstalled($package->package);
+                    }
+                }
                 try {
                     $source->forget();
                 } catch (Throwable) {

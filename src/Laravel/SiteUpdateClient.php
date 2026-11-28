@@ -20,6 +20,7 @@ use Larena\UpdateClient\Packages\PackageBatchCandidate;
 use Larena\UpdateClient\Packages\PackageBatchPlan;
 use Larena\UpdateClient\Packages\PackageListState;
 use Larena\UpdateClient\Packages\PackageListVerifier;
+use Larena\UpdateClient\Packages\PackageRemovalCandidate;
 use Larena\UpdateClient\Packages\PackageSource;
 use Larena\UpdateClient\Packages\PackageUpdateLicence;
 use Larena\UpdateClient\Packages\SiteLicensingUpdateLicence;
@@ -410,6 +411,39 @@ final readonly class SiteUpdateClient
     public function packageCandidate(PackageBatch $batch): PackageBatchCandidate
     {
         return new PackageBatchCandidate($this->verifier(), new ReleaseArchiveExtractor(), $this->packageLicence(), $batch, $this->channel());
+    }
+
+    /** Removing an addon's code (matrix 20): a cycle of its own; the addon's data stays. */
+    public function removalCandidate(string $package): PackageRemovalCandidate
+    {
+        return new PackageRemovalCandidate($this->verifier(), new ReleaseArchiveExtractor(), $package);
+    }
+
+    /** The cycle request for removing one addon: every reference derived from the package and its installed version. */
+    public function removalRequest(string $package, string $version, string $actorRef, string $idempotencyKey): UpdateCycleRequest
+    {
+        $slug = preg_replace('/[^a-z0-9]+/', '_', strtolower($package)) ?? 'package';
+        $manifestKey = 'packages.remove_' . trim($slug, '_');
+        $checksum = 'sha256:' . hash('sha256', 'remove:' . $package . '@' . $version);
+        $host = parse_url($this->siteUrl(), PHP_URL_HOST);
+
+        return new UpdateCycleRequest(
+            $actorRef,
+            'remove:' . substr(hash('sha256', $package . '@' . $version), 0, 16),
+            $idempotencyKey,
+            'update.plan.package_removal',
+            new UpdateManifest($manifestKey, $this->channel(), [$package], 'installed:' . $package, true),
+            new EntitlementSnapshot('update.open_channel', is_string($host) && $host !== '' ? $host : 'site', ['update.install'], true, true, true,
+                signatureValue: $checksum),
+            new StaticCapability('update.install', 'larena/update'),
+            new ArtifactVerificationResult('packages.removal', $checksum, 'installed:' . $package, $manifestKey, ArtifactVerificationStatus::Verified, true, true),
+            new ArrayLogicalFile(
+                'logical:update:remove:' . trim($slug, '_'), 'remove-' . trim($slug, '_'),
+                new ArrayStorageBlobReference($checksum, 'update.downloads', 1, 'application/json'),
+                FileVisibility::Internal, FileLifecycleClass::Temporary,
+            ),
+            ReleaseUpdateCycle::STEPS,
+        );
     }
 
     /** The cycle request for a planned batch: every reference derived from the signed list and the chosen releases. */

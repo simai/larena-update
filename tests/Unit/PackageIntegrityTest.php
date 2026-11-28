@@ -9,7 +9,18 @@ use Larena\Filesystem\Enums\FileLifecycleClass;
 use Larena\Filesystem\Enums\FileVisibility;
 use Larena\Filesystem\Runtime\ArrayLogicalFile;
 use Larena\Filesystem\Runtime\ArrayStorageBlobReference;
+use Larena\Licensing\Catalog\CapabilityCatalog;
+use Larena\Licensing\Catalog\CatalogCapability;
 use Larena\Licensing\Runtime\StaticCapability;
+use Larena\Licensing\Site\FileSnapshotStore;
+use Larena\Licensing\Site\PlanDowngrades;
+use Larena\Licensing\Site\RemovedAddons;
+use Larena\Licensing\Site\SiteDataAccess;
+use Larena\Licensing\Site\SiteLicensing;
+use Larena\Licensing\Site\SiteUsage;
+use Larena\Licensing\Site\SnapshotVerifier;
+use Larena\Licensing\Site\TestAddresses;
+use Larena\Licensing\Site\TrustedKeys;
 use Larena\UpdateClient\Contracts\ArtifactVerificationResult;
 use Larena\UpdateClient\Contracts\EntitlementSnapshot;
 use Larena\UpdateClient\Contracts\UpdateManifest;
@@ -28,6 +39,7 @@ use Larena\UpdateClient\Packages\PackageBatch;
 use Larena\UpdateClient\Packages\PackageBatchCandidate;
 use Larena\UpdateClient\Packages\PackageBatchPlanner;
 use Larena\UpdateClient\Packages\PackageListVerifier;
+use Larena\UpdateClient\Packages\PackageRemovalCandidate;
 use Larena\UpdateClient\Packages\PackageUpdateLicence;
 use Larena\UpdateClient\Release\RecordingReleaseActivation;
 use Larena\UpdateClient\Release\RecordingUpdateSite;
@@ -325,6 +337,68 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         $classmap = (string) file_get_contents((string) realpath($w['site'] . '/current') . '/vendor/composer/autoload_classmap.php');
         Kit::check(substr_count($classmap, "'Larena\\\\Addon\\\\Addon' =>") === 1 && str_contains($classmap, "'Larena\\\\Addon\\\\Extra' =>"), 'one entry per class, the new class mapped');
         Kit::check(($checks($w['site'])['scan'])()['result'] === IntegrityScanner::UNCHANGED, 'and the checks still pass after the second batch');
+
+        // 2b. Removing the addon (matrix 20): its code leaves the running release in one cycle, its data stays, and
+        // larena/licensing answers its functions read-only until it is installed again.
+        $records = $w['site'] . '/storage/app/addon/records.json';
+        mkdir(dirname($records), 0755, true);
+        file_put_contents($records, '{"records":[1,2,3]}');
+        $installedNow = static fn (string $package): bool => isset(InstalledPackages::read((string) realpath($w['site'] . '/current'), '1.3.0')->versions[$package]);
+        $folder = $w['site'] . '/storage/app/larena/licensing';
+        $data = new SiteDataAccess(
+            new SiteLicensing(new SnapshotVerifier(TrustedKeys::from([[]], [[]]), 'larena'), new FileSnapshotStore($folder . '/snapshot.json'), new TestAddresses(), 'shop.test'),
+            new CapabilityCatalog(['larena.capability.addon.base' => new CatalogCapability('larena.capability.addon.base', 'larena/addon', 'package_baseline', 'paid', true,
+                'site', false, [], 'addon.title', 'addon.description', 14)]),
+            new RemovedAddons($folder . '/removed-addons.json'), new PlanDowngrades($folder . '/downgrades.json'), new SiteUsage(), $installedNow, 30,
+        );
+        Kit::check($data->write('larena.capability.addon.base', SiteDataAccess::EDIT)->allowed, 'before removal the addon\'s data is editable');
+        $removal = static fn (string $package): PackageRemovalCandidate => new PackageRemovalCandidate($verifier, new ReleaseArchiveExtractor(), $package);
+        $before = (string) realpath($w['site'] . '/current');
+        $done = $w['cycle']->applyCandidate($request('addon:remove'), $removal('larena/addon'));
+        Kit::check($done->state === UpdateCycleState::Completed, 'the addon is removed in one cycle: ' . $done->reasonCode);
+        $current = (string) realpath($w['site'] . '/current');
+        Kit::check($current !== $before && is_dir($before . '/vendor/larena/addon'), 'a new release folder; the previous one keeps the addon for the rollback');
+        Kit::check(!file_exists($current . '/vendor/larena/addon') && !file_exists($current . '/.larena-packages/larena/addon')
+            && !str_contains((string) file_get_contents($current . '/vendor/composer/installed.json'), 'larena/addon')
+            && file_get_contents($current . '/vendor/composer/autoload_classmap.php') === $setFiles['vendor/composer/autoload_classmap.php']
+            && file_get_contents($current . '/vendor/composer/autoload_static.php') === $setFiles['vendor/composer/autoload_static.php']
+            && file_get_contents($current . '/vendor/composer/installed.php') === $setFiles['vendor/composer/installed.php']
+            && !file_exists($current . '/bootstrap/cache/packages.php'), 'the addon\'s code is out of the active set: folder, archive, autoloader, discovery cache');
+        Kit::check(InstalledPackages::read($current, '1.3.0')->kept === [] && !$installedNow('larena/addon'), 'the record no longer names the addon');
+        Kit::check(file_get_contents($records) === '{"records":[1,2,3]}', 'the addon\'s data in shared storage stays');
+        $journal = array_slice($w['fake']->journal, (int) array_search('backup:' . $done->cycleId, $w['fake']->journal, true));
+        Kit::check(in_array('migrate:' . basename($current), $journal, true) && preg_grep('/\Arestore:/', $journal) === [],
+            'the database only migrates forward and is not restored: the addon\'s tables stay');
+        Kit::check(($checks($w['site'])['scan'])()['result'] === IntegrityScanner::UNCHANGED, 'the checks pass on the release without the addon');
+        $readOnly = $data->addonRemoved('larena/addon', '1.1.0');
+        Kit::check($readOnly === ['larena.capability.addon.base'] && ($data->removedAddons()[0]['version'] ?? null) === '1.1.0', 'licensing notes «removed addon, data kept»');
+        $refused = $data->write('larena.capability.addon.base', SiteDataAccess::EDIT);
+        Kit::check(!$refused->allowed && $refused->reasonCode === 'addon_removed' && $data->read('larena.capability.addon.base')->allowed
+            && $data->export('larena.capability.addon.base')->allowed, 'after removal a write is refused on the server; reading and export stay');
+        // What cannot be removed: nothing installed under the name, a package of the product, an addon another package needs.
+        $again = $w['cycle']->applyCandidate($request('addon:remove-again'), $removal('larena/addon'));
+        Kit::check($again->state === UpdateCycleState::Blocked && $again->reasonCode === 'update_remove_not_installed', 'removing it again is refused');
+        $core = $w['cycle']->applyCandidate($request('addon:remove-core'), $removal('larena/core'));
+        Kit::check($core->state === UpdateCycleState::Blocked && $core->reasonCode === 'update_remove_not_addon', 'a package of the product is not an addon');
+        $needed = new InstalledPackages('1.3.0', ['larena/addon' => '1.0.0', 'larena/partner' => '1.0.0'],
+            ['larena/addon' => [], 'larena/partner' => ['require' => ['larena/addon' => '^1.0']]], [],
+            ['larena/addon' => ['version' => '1.0.0', 'released_at' => '2026-11-20T10:00:00+00:00', 'release' => '{}', 'signature' => '{}', 'added' => true]],
+            7, null, false, ['larena/addon']);
+        try {
+            $removal('larena/addon')->check($needed);
+            $reason = null;
+        } catch (\Larena\UpdateClient\Packages\PackageBatchRefused $exception) {
+            $reason = $exception->getMessage();
+        }
+        Kit::check($reason === 'update_remove_required', 'an addon another installed package requires stays');
+
+        // Installing it again (the same version) brings editing back on the same data.
+        $done = $w['cycle']->applyCandidate($request('addon:reinstall'), $candidate($batch('addon-reinstall', $list([$addon, $addonNext], 9), ['larena/addon@1.1.0' => $addonNext])));
+        Kit::check($done->state === UpdateCycleState::Completed && $installedNow('larena/addon'), 'the addon installs again: ' . $done->reasonCode);
+        Kit::check($data->write('larena.capability.addon.base', SiteDataAccess::EDIT)->allowed && $data->addonInstalled('larena/addon') && $data->removedAddons() === [],
+            'installed again, editing is back and the marker is cleared');
+        Kit::check(file_get_contents($records) === '{"records":[1,2,3]}', 'on the same data');
+        Kit::check(($checks($w['site'])['scan'])()['result'] === IntegrityScanner::UNCHANGED, 'and the checks pass after the reinstall');
 
         // 3. A failed check after the switch rolls the new package back with the rest.
         $w = $world('addon-health');

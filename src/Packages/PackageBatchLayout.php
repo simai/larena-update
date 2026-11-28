@@ -28,6 +28,10 @@ use Throwable;
  * packages the set did not have, the Composer files computed for them ({@see PackageAutoload}) replace the copied
  * ones, and Laravel's package discovery cache is left out, so the next boot finds the new providers.
  *
+ * A removal ({@see PackageRemovalCandidate}) is the same layout without the removed packages: their folders and kept
+ * archives are not copied, the record drops them, and the Composer files are computed again without them (the set's
+ * own files when no added package is left). Shared `storage` and the database are not touched: the data stays.
+ *
  * The new release keeps {@see InstalledPackages::RECORD}: for every package a batch installed (this one and earlier
  * ones) its version, publication date, exact signed release and signature, whether a batch added it, and the list
  * version. Its marker
@@ -67,6 +71,9 @@ final class PackageBatchLayout
         $skip = array_fill_keys(self::NOT_COPIED, true);
         foreach ($batch->releases as $release) {
             $skip['vendor/' . $release->package] = true;
+        }
+        foreach ($batch->removed as $package) {
+            $skip['vendor/' . $package] = true;
         }
         if ($batch->generated !== []) {
             foreach ([...array_keys($batch->generated), ...PackageAutoload::DISCOVERY_CACHE] as $path) {
@@ -154,7 +161,7 @@ final class PackageBatchLayout
 
     private static function record(CheckedPackageBatch $batch): string
     {
-        $packages = $batch->installed->kept;
+        $packages = array_diff_key($batch->installed->kept, array_flip($batch->removed));
         foreach ($batch->releases as $release) {
             $packages[$release->package] = [
                 'version' => $release->version,
@@ -173,8 +180,8 @@ final class PackageBatchLayout
         return json_encode([
             'schema' => InstalledPackages::RECORD_SCHEMA,
             'schema_version' => 1,
-            'list_version' => $batch->list->listVersion,
-            'list_sha256' => $batch->list->sha256,
+            'list_version' => $batch->list?->listVersion ?? $batch->installed->keptListVersion,
+            'list_sha256' => $batch->list?->sha256,
             'packages' => $packages,
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n";
     }

@@ -41,6 +41,9 @@ health address `GET /_larena/update/health` (answers
 - `larena:update:packages` — show the package updates this site may take as one
   batch; with `--apply --actor=<subject_ref>` install them in one cycle (see
   «Package batches» below; `--only=vendor/name` narrows it);
+- `larena:update:remove <vendor/name>` — say whether an addon can be removed;
+  with `--apply --actor=<subject_ref>` remove its code in one cycle, its data
+  kept read-only (see «Removing an addon» below);
 - `larena:update:rollback --actor=<subject_ref>` — back to the previous release
   (database from the copy unless `--keep-database`);
 - `larena:update:recover --actor=<subject_ref> --confirm=<cycle id>` — leave
@@ -156,6 +159,18 @@ one switch, the health check and on failure the same rollback. The batch release
 product, each installed package archive in `.larena-packages/` and the record `.larena-packages.json`; the file
 check lays each package's list over the product's (`Integrity\PackageLayer`). A new addon's classes are written into
 Composer's generated files by `Packages\PackageAutoload` (`psr-4` only, no Composer on the site).
+
+## Removing an addon
+
+Matrix 20: `larena:update:remove <vendor/name> --apply --actor=<subject_ref>` runs one cycle
+(`Packages\PackageRemovalCandidate`): the same copy, new folder, switch, health check and rollback as a batch, the new
+release being the running one without the addon's `vendor/<vendor>/<name>`, its kept archive, its record entry and its
+classes (the Composer files computed again; the product's own when no added package is left), without Laravel's
+discovery cache. Shared `storage` and the database are not touched: no migration runs down, no table is dropped. After
+the cycle, larena/licensing notes «removed addon, data kept» (`SiteDataAccess::addonRemoved`), so the addon's functions
+are read-only until `larena:update:packages --only=<vendor/name> --apply` installs it again (same or newer version),
+which takes the note off. Only an addon a batch added can be removed (`update_remove_not_addon` for a product package,
+`update_remove_not_installed`, `update_remove_required` when another installed package requires it).
 
 ## Admin: «Лицензия и обновления» → «Обновления»
 

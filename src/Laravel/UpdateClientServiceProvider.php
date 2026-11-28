@@ -18,6 +18,7 @@ use Larena\UpdateClient\Laravel\Console\IntegrityRestoreCommand;
 use Larena\UpdateClient\Laravel\Console\UpdateApplyCommand;
 use Larena\UpdateClient\Laravel\Console\UpdateCheckCommand;
 use Larena\UpdateClient\Laravel\Console\UpdatePackagesCommand;
+use Larena\UpdateClient\Laravel\Console\UpdateRemoveCommand;
 use Larena\UpdateClient\Laravel\Console\UpdateRecoverCommand;
 use Larena\UpdateClient\Laravel\Console\UpdateRollbackCommand;
 use Larena\UpdateClient\Laravel\Console\UpdateStatusCommand;
@@ -356,6 +357,7 @@ final class UpdateClientServiceProvider extends ServiceProvider
                 UpdateCheckCommand::class,
                 UpdateApplyCommand::class,
                 UpdatePackagesCommand::class,
+                UpdateRemoveCommand::class,
                 UpdateRollbackCommand::class,
                 UpdateStatusCommand::class,
                 UpdateRecoverCommand::class,
