@@ -117,6 +117,9 @@ final class MemoryLogger extends AbstractLogger
 
 final class UpdateClientTestKit
 {
+    /** Freshness fields of a release description the update server signs ({@see \Larena\UpdateClient\Source\ReleaseListFreshness}). */
+    public const FRESH = ['list_version' => 1, 'expires_at' => '2099-01-01T00:00:00+00:00'];
+
     /** A gzip tar with `artisan` and `public/index.php`, the shape a release archive has. */
     public static function tar(string $version): string
     {
@@ -134,11 +137,12 @@ final class UpdateClientTestKit
 
     /**
      * A signed release: [release.json bytes, release.json.sig bytes, archive bytes]. The key is a throwaway pair made
-     * by the test; no real release key is ever in a repository.
+     * by the test; no real release key is ever in a repository. `$list`: the freshness fields (null: none, as GitHub).
      *
+     * @param array<string,mixed>|null $list
      * @return array{0:string,1:string,2:string}
      */
-    public static function release(string $version, string $secretKey, string $keyId = 'release.test', ?string $archive = null, string $minimum = '1.0.0', string $product = 'larena'): array
+    public static function release(string $version, string $secretKey, string $keyId = 'release.test', ?string $archive = null, string $minimum = '1.0.0', string $product = 'larena', ?array $list = self::FRESH): array
     {
         $archive ??= self::tar($version);
         $bytes = (string) json_encode([
@@ -147,7 +151,7 @@ final class UpdateClientTestKit
             'archive' => ['file' => 'larena-' . $version . '.tar.gz', 'sha256' => hash('sha256', $archive), 'bytes' => strlen($archive)],
             'packages' => ['larena/core' => str_repeat('a', 40)], 'backward_incompatible_migrations' => false,
             'notes' => ['en' => 'Release ' . $version],
-        ], JSON_UNESCAPED_SLASHES);
+        ] + ($list ?? []), JSON_UNESCAPED_SLASHES);
         $signature = (string) json_encode(['key_id' => $keyId, 'signature' => base64_encode(sodium_crypto_sign_detached($bytes, $secretKey))]);
 
         return [$bytes, $signature, $archive];

@@ -89,6 +89,12 @@ folders `file:///path` with the layout the release step writes
 goes into an address, a log or an error, and without it requests go as before.
 `ReleaseSource::entitlement()` asks `GET <source>/entitlement` with the same
 header and returns the raw answer (only `schema_version` 1 is checked).
+The newest release a source names must be fresh (`Source\ReleaseListFreshness`, the one place of the rule): its
+signed `release.json` carries `list_version` (only grows) and `expires_at` (ISO 8601 with offset); the highest number
+seen per product and channel is kept in `storage/app/larena/update/release-list.json`. An expired or lower one is
+`update_release_list_stale`, a missing or malformed field `update_release_list_invalid`, both before any write and
+even when the answer is «not newer». github.com release pages and `file://` folders may omit the fields (they cannot
+be signed again every day, and nobody on the network can freeze a folder); the update server must carry them.
 `LARENA_UPDATE_PRODUCT` (default `larena`; `larena-panel` for the panel) is the
 `product` a signed `release.json` must name, for updates and integrity checks.
 `files.json` (schema `larena.release-files`) lists every path of the release

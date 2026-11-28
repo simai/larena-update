@@ -189,7 +189,10 @@
     "tests/Unit/UpdatesSectionTest.php",
     "src/Laravel/Console/UpdateRecoverCommand.php",
     "src/Laravel/Http/SiteHealthController.php",
-    "src/Laravel/SelfAddressCheck.php"
+    "src/Laravel/SelfAddressCheck.php",
+    "src/Source/ReleaseListFreshness.php",
+    "src/Source/ReleaseListState.php",
+    "tests/Unit/ReleaseListFreshnessTest.php"
   ],
   "forbidden_files": [
     "resources/*",

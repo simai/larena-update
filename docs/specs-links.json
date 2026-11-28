@@ -3,7 +3,7 @@
   "schema_version": 1,
   "repository": "simai/larena-update",
   "specs_repo": "simai/larena-specs",
-  "specs_commit": "68eda421a7a60aeaad949bac9ef9e261b374aa04",
+  "specs_commit": "e5f3719fb3a70e853bcdce9c3a6f69db8bab9487",
   "links": [
     { "path": "docs/architecture/larena-licensing-updates-purchase.md", "anchor": "delivery", "why": "Delivery variant A: one product build; batches take closed addons and partner modules only." },
     { "path": "docs/architecture/larena-licensing-updates-purchase.md", "anchor": "updates", "why": "How a site updates: the product cycle with copy and automatic rollback, and addon batches." },

@@ -30,6 +30,7 @@ use Larena\UpdateClient\Release\ReleaseSignatureVerifier;
 use Larena\UpdateClient\Release\ReleaseUpdateCycle;
 use Larena\UpdateClient\Release\VerifiedRelease;
 use Larena\UpdateClient\Runtime\PdoUpdateExecutionStore;
+use Larena\UpdateClient\Source\ReleaseListState;
 use Larena\UpdateClient\Source\ReleaseSource;
 use Larena\UpdateClient\Source\UpdateHttpClient;
 use PDO;
@@ -198,7 +199,14 @@ final readonly class SiteUpdateClient
             self::int($download['max_archive_bytes'] ?? null, 1073741824),
             is_string($this->config['tag_prefix'] ?? null) ? $this->config['tag_prefix'] : 'v',
             is_string($this->config['site_key'] ?? null) ? $this->config['site_key'] : null,
+            $this->releaseListState(),
         );
+    }
+
+    /** The highest release description number seen per product and channel, in the shared storage. */
+    public function releaseListState(): ReleaseListState
+    {
+        return ReleaseListState::forSite($this->siteRoot());
     }
 
     public function preflight(): SitePreflight

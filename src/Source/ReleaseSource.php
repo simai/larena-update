@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Larena\UpdateClient\Source;
 
+use Closure;
+use DateTimeImmutable;
 use Larena\UpdateClient\Release\FileList;
 use Larena\UpdateClient\Release\ReleaseDirectory;
 use Larena\UpdateClient\Release\ReleaseSignatureVerifier;
@@ -43,6 +45,11 @@ use Throwable;
  * refusal code becomes `update_license_required`, `update_license_expired`, `update_license_revoked`,
  * `update_site_key_required` or `update_site_key_rejected` ({@see refusal()}); any other failure stays
  * `update_download_failed`.
+ *
+ * The newest release a source names must be fresh ({@see ReleaseListFreshness}, matrix 3): its signed `list_version`
+ * not lower than the highest this site saw for the product and channel ({@see ReleaseListState}) and its `expires_at`
+ * not passed, else `update_release_list_stale`; the update server must carry both, github.com and a folder may omit
+ * them. A frozen answer is refused even when it is «not newer»: an old description must not hide a newer release.
  */
 final class ReleaseSource
 {
@@ -70,6 +77,8 @@ final class ReleaseSource
         private readonly int $maxArchiveBytes = 1073741824,
         private readonly string $tagPrefix = 'v',
         #[\SensitiveParameter] ?string $siteKey = null,
+        private readonly ?ReleaseListState $lists = null,
+        private readonly ?Closure $clock = null,
     ) {
         $siteKey = $siteKey === null ? '' : trim($siteKey);
         // A bearer token: visible ASCII only, so it can never break the header or the request line.
@@ -117,7 +126,23 @@ final class ReleaseSource
         foreach ($this->sources as $source) {
             try {
                 [$bytes, $signature] = $this->description($source, $this->latestBase($source));
-                $release = $this->verifier->verify($bytes, $signature, $installedVersion, $channel);
+                // Signature first, then freshness, then «newer»: a frozen answer is stale even when it is not newer.
+                $this->verifier->signedBy($bytes, $signature);
+                $product = $this->verifier->product();
+                $listVersion = ReleaseListFreshness::check($bytes, ReleaseListFreshness::required($source), $this->now(),
+                    $this->lists?->seen($product, $channel) ?? 0);
+                try {
+                    $release = $this->verifier->verify($bytes, $signature, $installedVersion, $channel);
+                } catch (RuntimeException $exception) {
+                    if ($exception->getMessage() === 'release_not_newer' && $listVersion !== null) {
+                        // Product and channel held: the number is this product's.
+                        $this->lists?->see($product, $channel, $listVersion);
+                    }
+                    throw $exception;
+                }
+                if ($listVersion !== null) {
+                    $this->lists?->see($product, $channel, $listVersion);
+                }
 
                 return new SourceRelease($source, $release);
             } catch (Throwable $exception) {
@@ -380,7 +405,15 @@ final class ReleaseSource
             : ['Authorization' => 'Bearer ' . $this->siteKey];
     }
 
-    private static function isGitHub(string $source): bool
+    private function now(): DateTimeImmutable
+    {
+        $now = $this->clock !== null ? ($this->clock)() : null;
+
+        return $now instanceof DateTimeImmutable ? $now : new DateTimeImmutable();
+    }
+
+    /** Whether a source is a github.com releases page (no site key, no freshness fields required). */
+    public static function isGitHub(string $source): bool
     {
         $host = strtolower((string) parse_url($source, PHP_URL_HOST));
 
