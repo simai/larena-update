@@ -8,8 +8,9 @@ use JsonException;
 use RuntimeException;
 
 /**
- * The update server's answer for a revoked release (matrix 5): HTTP 410 with
- * `{"code":"release_revoked","version":"x.y.z","fixed_in":"x.y.z"|null}`. A typed outcome, not a generic failure: its
+ * A revoked release (matrix 5): the update server's HTTP 410 answer
+ * `{"error":"release_revoked","version":"x.y.z","fixed_in":"x.y.z"|null}`, or an entry of its signed index's `revoked`
+ * list ({@see ReleaseIndex}). A typed outcome, not a generic failure: its
  * reason code is `update_release_revoked`, and it names the revoked version and, when the server knows one, the
  * version that fixes it. Only these fields are read from at most 4 KiB of the answer; anything else stays unknown.
  */
@@ -34,7 +35,7 @@ final class ReleaseRevoked extends RuntimeException
                 $answer = null;
             }
         }
-        $answer = is_array($answer) && !array_is_list($answer) && ($answer['code'] ?? null) === 'release_revoked' ? $answer : [];
+        $answer = is_array($answer) && !array_is_list($answer) && ($answer['error'] ?? null) === 'release_revoked' ? $answer : [];
         $version = self::version($answer['version'] ?? null) ?? self::version($asked);
         $fixedIn = self::version($answer['fixed_in'] ?? null);
         if ($fixedIn !== null && $version !== null && version_compare($fixedIn, $version, '<=')) {

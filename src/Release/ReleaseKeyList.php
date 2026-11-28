@@ -14,14 +14,14 @@ use Throwable;
  * One signed release key list (`keys.json` + `keys.json.sig`, matrix 6 and 44): how release keys change without a new
  * build — «the old key signs the new one» — and how a key is revoked by a signed file.
  *
- * `{"schema":"larena.release-keys","list_version":int,"expires_at":iso,"keys":[{"id","public_key","not_before"}],
- * "revoked":["id",...]}`, with a detached Ed25519 signature over its exact bytes in the format of `release.json.sig`
+ * `{"schema":"larena.release-keys","list_version":int,"expires_at":iso,"signed_by":"id",
+ * "keys":[{"id","public_key","not_before"}],"revoked":["id",...]}` (`signed_by`: the id of the signing key), with a detached Ed25519 signature over its exact bytes in the format of `release.json.sig`
  * (`{"key_id","signature"}`). The signature must come from a key the site already trusts — shipped with the site,
  * from `.env`, or accepted from an earlier list — and not revoked; a key named in this list is never trusted to sign
  * it (a key can never authorise itself). `not_before` (ISO 8601 with offset): before it the new key signs nothing.
  *
  * Refusals: `update_keys_signature_invalid` (unknown, revoked or wrong signature — the reason code names which),
- * `update_keys_invalid` (shape, a key id that already names another key, a list that revokes its own signer).
+ * `update_keys_invalid` (shape, `signed_by` not the signing key, a key id that already names another key, a list that revokes its own signer).
  * Freshness (`list_version`, `expires_at`) is judged by {@see ReleaseKeyState}, which keeps what is accepted.
  */
 final readonly class ReleaseKeyList
@@ -64,7 +64,7 @@ final readonly class ReleaseKeyList
         } catch (JsonException) {
             throw new RuntimeException('update_keys_invalid');
         }
-        if (!is_array($data) || array_is_list($data) || ($data['schema'] ?? null) !== self::SCHEMA) {
+        if (!is_array($data) || array_is_list($data) || ($data['schema'] ?? null) !== self::SCHEMA || ($data['signed_by'] ?? null) !== $signer) {
             throw new RuntimeException('update_keys_invalid');
         }
         $version = $data['list_version'] ?? null;

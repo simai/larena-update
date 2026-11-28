@@ -27,8 +27,8 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
     file_put_contents($root . '/releases/1.2.0/.larena-release', json_encode(['version' => '1.2.0']));
     symlink('releases/1.2.0', $root . '/current');
     $sign = static fn (string $bytes, string $secret, string $id): string => (string) json_encode(['key_id' => $id, 'signature' => base64_encode(sodium_crypto_sign_detached($bytes, $secret))]);
-    $keys = static function (int $version, array $keys, array $revoked, string $secret, string $id, string $expires = '2099-01-01T00:00:00+00:00') use ($sign): array {
-        $bytes = (string) json_encode(['schema' => 'larena.release-keys', 'list_version' => $version, 'expires_at' => $expires,
+    $keys = static function (int $version, array $keys, array $revoked, string $secret, string $id, string $expires = '2099-01-01T00:00:00+00:00', ?string $signedBy = null) use ($sign): array {
+        $bytes = (string) json_encode(['schema' => 'larena.release-keys', 'list_version' => $version, 'expires_at' => $expires, 'signed_by' => $signedBy ?? $id,
             'keys' => array_map(static fn (array $key): array => ['id' => $key[0], 'public_key' => $key[1], 'not_before' => $key[2] ?? '2026-01-01T00:00:00+00:00'], $keys),
             'revoked' => $revoked], JSON_UNESCAPED_SLASHES);
 
@@ -40,8 +40,9 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         return $served[$request->url] ?? [404, 'not found'];
     });
     $serve = static function (?array $list, string $releaseSecret, string $releaseKey) use (&$served, $server): void {
-        [$bytes, $signature] = Kit::release('1.3.0', $releaseSecret, $releaseKey, list: ['list_version' => 1, 'expires_at' => '2099-01-01T00:00:00+00:00']);
-        $served = [$server . '/latest/download/release.json' => [200, $bytes], $server . '/latest/download/release.json.sig' => [200, $signature]];
+        [$bytes, $signature] = Kit::release('1.3.0', $releaseSecret, $releaseKey);
+        // The index is signed by the same key as the release: both must be trusted.
+        $served = Kit::server($server, $bytes, $signature, $releaseSecret, $releaseKey);
         if ($list !== null) {
             $served[$server . '/keys.json'] = [200, $list[0]];
             $served[$server . '/keys.json.sig'] = [200, $list[1]];
@@ -95,6 +96,8 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
             $keys(2, [['release.old', $strangerPublic]], [], $oldSecret, 'release.old'),
             $keys(2, [['release.third', $thirdPublic]], ['release.old'], $oldSecret, 'release.old'),
             [(string) json_encode(['schema' => 'larena.release-keys', 'list_version' => 2, 'keys' => []]), $sign((string) json_encode(['schema' => 'larena.release-keys', 'list_version' => 2, 'keys' => []]), $oldSecret, 'release.old')],
+            // signed_by must name the key that signed: a list claiming another signer is refused.
+            $keys(2, [['release.third', $thirdPublic]], [], $oldSecret, 'release.old', signedBy: 'release.new'),
         ] as $index => $bad) {
             $serve($bad, $newSecret, 'release.new');
             Kit::check($client()->refreshKeys()['reason'] === 'update_keys_invalid', 'A malformed list is refused: ' . $index);

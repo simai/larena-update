@@ -141,10 +141,7 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
 
         // Environment keys are trusted for a release, next to the distribution's; a revoked id still wins.
         [$standBytes, $standSig] = Kit::release('1.3.0', $secret, 'stand.release');
-        $serving = FakeUpdateHttpClient::serving([
-            $server . '/latest/download/release.json' => [200, $standBytes],
-            $server . '/latest/download/release.json.sig' => [200, $standSig],
-        ]);
+        $serving = FakeUpdateHttpClient::serving(Kit::server($server, $standBytes, $standSig, $secret, 'stand.release'));
         $client = static fn (array $config): SiteUpdateClient => new SiteUpdateClient(
             SiteUpdateClient::withReleaseKeys($config + ['sources' => [$server], 'site_root' => $root, 'download' => ['directory' => $downloads]], ['larena.release' => $second]),
             $root, 'https://site.example.test', static fn (): PDO => new PDO('sqlite::memory:'), new MemoryLogger(), $serving,

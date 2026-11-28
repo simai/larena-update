@@ -45,7 +45,8 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         Kit::check($source->latest('1.3.0') === null, 'An installed newest version is up to date.');
 
         // A source with a foreign signature is skipped for the next one.
-        $http = FakeUpdateHttpClient::serving($files($github . '/latest/download/', $foreignBytes, $foreignSignature) + $files($mirror . '/latest/download/', $bytes, $signature));
+        // The mirror is an update server: its signed index names the release.
+        $http = FakeUpdateHttpClient::serving($files($github . '/latest/download/', $foreignBytes, $foreignSignature) + Kit::server($mirror, $bytes, $signature, $secret));
         $source = new ReleaseSource($http, [$github, $mirror], $downloads, $verifier);
         $offer = $source->latest('1.2.0');
         Kit::check($offer !== null && $offer->source === $mirror && $source->errors() === [$github => 'release_signature_mismatch'], 'A badly signed source must be skipped with its reason.');

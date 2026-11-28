@@ -77,7 +77,7 @@ site or a test stand adds its own in `.env` as
 `LARENA_UPDATE_TRUSTED_KEYS=id=base64,id2=base64` (a malformed pair or a value
 that is not 32 bytes after base64 is ignored; `revoked_key_ids` still win).
 Keys change without a new build through a signed key list (`Release\ReleaseKeyList`): `keys.json`
-(`{"schema":"larena.release-keys","list_version","expires_at","keys":[{"id","public_key","not_before"}],"revoked":[…]}`)
+(`{"schema":"larena.release-keys","list_version","expires_at","signed_by","keys":[{"id","public_key","not_before"}],"revoked":[…]}`)
 with `keys.json.sig` (the `release.json.sig` format) at `<source>/keys.json` (a folder: `<folder>/keys.json`;
 github.com: the newest release's asset), signed by a key the site already trusts — «the old key signs the new one»;
 a key never authorises itself. `larena:update:check` and «Проверить сейчас» refresh it first. Accepted lists are kept
@@ -100,18 +100,20 @@ folders `file:///path` with the layout the release step writes
 goes into an address, a log or an error, and without it requests go as before.
 `ReleaseSource::entitlement()` asks `GET <source>/entitlement` with the same
 header and returns the raw answer (only `schema_version` 1 is checked).
-The newest release a source names must be fresh (`Source\ReleaseListFreshness`, the one place of the rule): its
-signed `release.json` carries `list_version` (only grows) and `expires_at` (ISO 8601 with offset); the highest number
-seen per product and channel is kept in `storage/app/larena/update/release-list.json`. An expired or lower one is
-`update_release_list_stale`, a missing or malformed field `update_release_list_invalid`, both before any write and
-even when the answer is «not newer». github.com release pages and `file://` folders may omit the fields (they cannot
-be signed again every day, and nobody on the network can freeze a folder); the update server must carry them.
-A revoked release: the update server answers 410 `{"code":"release_revoked","version","fixed_in"}`
-(`Source\ReleaseRevoked`, reason `update_release_revoked`), never installed. After a check the site asks the same
-update server for the installed version's `download/v<version>/release.json`; a 410 there is kept in
-`storage/app/larena/update/revoked.json` and shown as the danger «Эта версия отозвана — обновите срочно» (with
-«Исправлено в X») on «Обновления» and in the admin's alert bar (`update-client:updates:revoked`), in
-`larena:update:check` and `larena:update:status`, until a newer version is installed.
+The update server's newest release comes through its signed channel index (`Source\ReleaseIndex`, the one place of
+the rule; contract agreed with Larena Server 2026-11-28): `<source>/index.json` + `index.json.sig`
+(`larena.release-index`: `product`, `channel`, `list_version` growing with every publish or revocation, `expires_at`
+now + 7 days and signed again daily, `signed_by`, `latest` `{version, release_sha256}`, `revoked`
+`[{version, fixed_in}]`). Releases stay immutable, signed once. The highest `list_version` seen per product and
+channel is kept in `storage/app/larena/update/release-list.json`; an expired or lower index is
+`update_release_list_stale`, a missing or malformed one `update_release_list_invalid`, both before any write and even
+when it would say «not newer». The release then read (`download/v<version>/release.json`) must hash to
+`release_sha256` (`update_release_index_mismatch`). github.com release pages and `file://` folders have no index.
+A revoked installed version is taken from the index's `revoked` list: kept in `storage/app/larena/update/revoked.json`
+and shown as the danger «Эта версия отозвана — обновите срочно» (with «Исправлено в X») on «Обновления» and in the
+admin's alert bar (`update-client:updates:revoked`), in `larena:update:check` and `larena:update:status`, until a
+newer version is installed or the index no longer lists it. A download answered 410
+`{"error":"release_revoked","version","fixed_in"}` is refused as `update_release_revoked` (`Source\ReleaseRevoked`).
 `LARENA_UPDATE_PRODUCT` (default `larena`; `larena-panel` for the panel) is the
 `product` a signed `release.json` must name, for updates and integrity checks.
 `files.json` (schema `larena.release-files`) lists every path of the release

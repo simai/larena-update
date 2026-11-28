@@ -20,9 +20,9 @@ use Larena\UpdateClient\Tests\Support\FakeUpdateHttpClient;
 use Larena\UpdateClient\Tests\Support\MemoryLogger;
 use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
 
-// A revoked version (matrix 5): the update server answers 410 `{"code":"release_revoked","version","fixed_in"}`. A typed
-// outcome, never installed; «the installed version is revoked» is kept for the page and the alert bar until a newer
-// version is installed. No network: a fake update server with a throwaway key.
+// A revoked version (matrix 5): the signed index lists it in `revoked`, a download answers 410
+// `{"error":"release_revoked","version","fixed_in"}`. A typed outcome, never installed; «the installed version is
+// revoked» is kept for the page and the alert bar until a newer version is installed or the index no longer lists it. No network: a fake update server with a throwaway key.
 (static function (): void {
     $pair = sodium_crypto_sign_keypair();
     $secret = sodium_crypto_sign_secretkey($pair);
@@ -33,46 +33,41 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
     $root = Kit::temp('revoked');
     $downloads = $root . '/downloads';
     [$bytes, $signature] = Kit::release('1.3.0', $secret);
-    $gone = static fn (string $version, ?string $fixed): array => [410, (string) json_encode(['code' => 'release_revoked', 'version' => $version, 'fixed_in' => $fixed])];
-    $latest = [$server . '/latest/download/release.json' => [200, $bytes], $server . '/latest/download/release.json.sig' => [200, $signature]];
+    $gone = static fn (string $version, ?string $fixed): array => [410, (string) json_encode(['error' => 'release_revoked', 'version' => $version, 'fixed_in' => $fixed])];
+    $revokedIndex = ['revoked' => [['version' => '1.2.0', 'fixed_in' => '1.3.0'], ['version' => '1.1.0', 'fixed_in' => null]]];
+    $latest = Kit::server($server, $bytes, $signature, $secret, fields: $revokedIndex);
 
     try {
         // The answer is read strictly; a «fix» that is not newer says nothing.
-        $answer = ReleaseRevoked::fromAnswer('{"code":"release_revoked","version":"1.2.0","fixed_in":"1.2.1"}');
+        $answer = ReleaseRevoked::fromAnswer('{"error":"release_revoked","version":"1.2.0","fixed_in":"1.2.1"}');
         Kit::check($answer->getMessage() === 'update_release_revoked' && $answer->version === '1.2.0' && $answer->fixedIn === '1.2.1', 'A 410 names the version and its fix.');
-        Kit::check(ReleaseRevoked::fromAnswer('{"code":"release_revoked","version":"1.2.0","fixed_in":null}')->fixedIn === null, 'No fix known.');
-        Kit::check(ReleaseRevoked::fromAnswer('{"code":"release_revoked","version":"1.2.0","fixed_in":"1.1.0"}')->fixedIn === null, 'An older «fix» is ignored.');
-        Kit::check(ReleaseRevoked::fromAnswer('not json', '1.3.0')->version === '1.3.0' && ReleaseRevoked::fromAnswer('{"code":"other","version":"9.9.9"}', '1.3.0')->version === '1.3.0', 'A bare 410 is about the version asked for.');
-        Kit::check(ReleaseRevoked::fromAnswer('{"code":"release_revoked","version":"../x"}')->version === null, 'A malformed version is never read.');
+        Kit::check(ReleaseRevoked::fromAnswer('{"error":"release_revoked","version":"1.2.0","fixed_in":null}')->fixedIn === null, 'No fix known.');
+        Kit::check(ReleaseRevoked::fromAnswer('{"error":"release_revoked","version":"1.2.0","fixed_in":"1.1.0"}')->fixedIn === null, 'An older «fix» is ignored.');
+        Kit::check(ReleaseRevoked::fromAnswer('not json', '1.3.0')->version === '1.3.0' && ReleaseRevoked::fromAnswer('{"error":"other","version":"9.9.9"}', '1.3.0')->version === '1.3.0', 'A bare 410 is about the version asked for.');
+        Kit::check(ReleaseRevoked::fromAnswer('{"error":"release_revoked","version":"../x"}')->version === null, 'A malformed version is never read.');
 
-        // A check: the installed version answers 410 → kept, with its fix.
+        // A check: the signed index lists the installed version as revoked → kept, with its fix; no extra request.
         $state = RevokedReleaseState::forSite($root);
-        $http = FakeUpdateHttpClient::serving($latest + [$server . '/download/v1.2.0/release.json' => $gone('1.2.0', '1.3.0')]);
+        $http = FakeUpdateHttpClient::serving($latest);
         $source = new ReleaseSource($http, [$server], $downloads, $verifier, revocations: $state);
         $offer = $source->latest('1.2.0');
-        Kit::check($offer?->release->version === '1.3.0', 'The check still offers the newer release.');
+        Kit::check($offer?->release->version === '1.3.0' && count($http->requests) === 4, 'The check still offers the newer release, with no extra request.');
         Kit::check($source->revoked()?->version === '1.2.0' && $source->revoked()?->fixedIn === '1.3.0', 'The check says the installed version is revoked.');
         $kept = $state->current('1.2.0');
         Kit::check($kept !== null && $kept['fixed_in'] === '1.3.0' && $state->current('1.1.0') === null, 'The revocation is kept for that version only.');
         Kit::check(!is_dir($downloads), 'A check writes nothing to the downloads.');
 
-        // A 410 about another version than the installed one marks nothing.
-        $other = new RevokedReleaseState($root . '/other.json');
-        $source = new ReleaseSource(FakeUpdateHttpClient::serving($latest + [$server . '/download/v1.2.0/release.json' => $gone('1.1.0', null)]), [$server], $downloads, $verifier, revocations: $other);
+        // An index that no longer lists the installed version clears the mark.
+        $cleared = new RevokedReleaseState($root . '/cleared.json');
+        $cleared->record('1.2.0', new ReleaseRevoked('1.2.0', null));
+        $source = new ReleaseSource(FakeUpdateHttpClient::serving(Kit::server($server, $bytes, $signature, $secret)), [$server], $downloads, $verifier, revocations: $cleared);
         $source->latest('1.2.0');
-        Kit::check($source->revoked() === null && $other->current('1.2.0') === null, 'Another version\'s revocation is not the installed one\'s.');
-
-        // github.com is never asked about the installed version, nor is any source without the state.
-        $http = FakeUpdateHttpClient::serving([$github . '/latest/download/release.json' => [200, $bytes], $github . '/latest/download/release.json.sig' => [200, $signature]]);
-        (new ReleaseSource($http, [$github], $downloads, $verifier, revocations: $other))->latest('1.2.0');
-        Kit::check(count($http->requests) === 2, 'github.com is not asked about revocations.');
-        $http = FakeUpdateHttpClient::serving($latest);
-        (new ReleaseSource($http, [$server], $downloads, $verifier))->latest('1.2.0');
-        Kit::check(count($http->requests) === 2, 'Without the state nothing more is asked.');
-
-        // The probe failing never fails a check.
-        $http = new FakeUpdateHttpClient(static fn ($request): array => str_contains($request->url, '/download/v1.2.0/') ? throw new RuntimeException('update_http_failed') : ($latest[$request->url] ?? [404, '']));
-        Kit::check((new ReleaseSource($http, [$server], $downloads, $verifier, revocations: $other))->latest('1.2.0') !== null, 'A failed revocation question leaves the check standing.');
+        Kit::check($source->revoked() === null && $cleared->current('1.2.0') === null, 'A fresh index without the version takes the mark away.');
+        // Another version's revocation is not the installed one's.
+        $other = new RevokedReleaseState($root . '/other.json');
+        $source = new ReleaseSource(FakeUpdateHttpClient::serving($latest), [$server], $downloads, $verifier, revocations: $other);
+        $source->latest('1.1.5');
+        Kit::check($source->revoked() === null && $other->current('1.1.5') === null, 'Only the installed version counts.');
 
         // A download of a revoked version: a typed refusal before any write.
         $http = FakeUpdateHttpClient::serving([$server . '/download/v1.3.0/release.json' => $gone('1.3.0', '1.3.1')]);

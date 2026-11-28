@@ -199,7 +199,9 @@
     "tests/Unit/RevokedReleaseTest.php",
     "src/Release/ReleaseKeyList.php",
     "src/Release/ReleaseKeyState.php",
-    "tests/Unit/ReleaseKeyRotationTest.php"
+    "tests/Unit/ReleaseKeyRotationTest.php",
+    "src/Source/ReleaseIndex.php",
+    "tests/Unit/ReleaseIndexTest.php"
   ],
   "forbidden_files": [
     "resources/*",

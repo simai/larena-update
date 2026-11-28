@@ -26,10 +26,11 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
     $downloads = $root . '/downloads';
     [$larena, $larenaSig] = Kit::release('1.3.0', $secret);
     [$panel, $panelSig] = Kit::release('1.3.0', $secret, product: 'larena-panel');
-    $latest = static fn (string $base, string $json, string $sig): array => [
+    // The update server: its signed index, then the release it names; github.com: the newest release page.
+    $latest = static fn (string $base, string $json, string $sig): array => str_starts_with($base, 'https://github.com/') ? [
         $base . '/latest/download/release.json' => [200, $json],
         $base . '/latest/download/release.json.sig' => [200, $sig],
-    ];
+    ] : Kit::server($base, $json, $sig, $secret);
     $client = static fn (array $config, FakeUpdateHttpClient $http, ?MemoryLogger $logger = null): SiteUpdateClient => new SiteUpdateClient(
         $config + ['trusted_keys' => ['release.test' => $public], 'site_root' => $root, 'download' => ['directory' => $downloads]],
         $root, 'https://site.example.test', static fn (): PDO => new PDO('sqlite::memory:'), $logger ?? new MemoryLogger(), $http,
@@ -53,13 +54,13 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         $panelSite = $client(['sources' => [$server], 'product' => 'larena-panel'], FakeUpdateHttpClient::serving($latest($server, $panel, $panelSig)));
         Kit::check($panelSite->product() === 'larena-panel' && $panelSite->source()->latest('1.2.0')?->release->product === 'larena-panel', 'LARENA_UPDATE_PRODUCT=larena-panel must take panel releases.');
         $wrong = $client(['sources' => [$server], 'product' => 'larena-panel'], FakeUpdateHttpClient::serving($latest($server, $larena, $larenaSig)));
-        Kit::check(Kit::reason(static fn () => $wrong->source()->latest('1.2.0')) === 'release_product_differs', 'The panel must refuse a Larena release from its source.');
+        Kit::check(Kit::reason(static fn () => $wrong->source()->latest('1.2.0')) === 'update_release_list_invalid', 'The panel must refuse a Larena index from its source.');
         Kit::check(Kit::reason(static fn () => $client(['product' => "larena\npanel"], $serving)->verifier()) === 'update_product_invalid', 'A malformed product must be refused.');
 
         // Site key: in the Authorization header of every request to the update server, never in an address.
         $http = FakeUpdateHttpClient::serving($latest($server, $larena, $larenaSig));
         $client(['sources' => [$server], 'site_key' => $siteKey], $http)->source()->latest('1.2.0');
-        Kit::check(count($http->requests) === 3 && str_ends_with($http->requests[2]->url, '/download/v1.2.0/release.json'), 'A check reads the description, its signature and whether the installed version is revoked.');
+        Kit::check(count($http->requests) === 4 && str_ends_with($http->requests[0]->url, '/index.json'), 'A check reads the index, its signature, the description and its signature.');
         foreach ($http->requests as $request) {
             Kit::check(($request->headers['Authorization'] ?? null) === 'Bearer ' . $siteKey, 'Every request to the update server must carry the site key.');
             Kit::check(!$leaks($request->url), 'The site key must never be in an address.');
@@ -69,7 +70,7 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
         foreach ([[], ['site_key' => ''], ['site_key' => null]] as $config) {
             $http = FakeUpdateHttpClient::serving($latest($server, $larena, $larenaSig));
             $client(['sources' => [$server]] + $config, $http)->source()->latest('1.2.0');
-            Kit::check(array_map(static fn (UpdateHttpRequest $request): array => $request->headers, $http->requests) === [[], [], []], 'Without a site key requests must carry no header.');
+            Kit::check(array_map(static fn (UpdateHttpRequest $request): array => $request->headers, $http->requests) === [[], [], [], []], 'Without a site key requests must carry no header.');
         }
 
         // github.com public releases never see the key; the update server after it still does.

@@ -8,7 +8,7 @@ use JsonException;
 use RuntimeException;
 
 /**
- * The highest release description number (`list_version`, {@see ReleaseListFreshness}) this site accepted, per product
+ * The highest release description number (`list_version`, {@see ReleaseIndex}) this site accepted, per product
  * and channel, kept in the shared storage (`storage/app/larena/update/release-list.json`) outside every release, like
  * {@see \Larena\UpdateClient\Packages\PackageListState}: a rollback of code or database does not bring an older
  * description back into trust. A number only moves forward.

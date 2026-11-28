@@ -20,7 +20,7 @@ use Throwable;
  *   exactly `larena:update:apply` ({@see ReleaseInstall}: copy, new code, migrations, switch, health check, automatic
  *   rollback). A web request never switches the code it runs on. Without a queue the page names the command;
  * - the installation journal: the last cycles of the update store, and the cycle not finished;
- * - «Эта версия отозвана — обновите срочно» (matrix 5): the update server answered 410 for the running version at the
+ * - «Эта версия отозвана — обновите срочно» (matrix 5): the update server's signed index listed the running version as revoked at the
  *   last check ({@see \Larena\UpdateClient\Source\RevokedReleaseState}); a newer installed version clears it.
  *
  * Reason codes only: never a key, a source answer or a path.

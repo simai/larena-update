@@ -46,17 +46,18 @@ use Throwable;
  * `update_site_key_required` or `update_site_key_rejected` ({@see refusal()}); any other failure stays
  * `update_download_failed`.
  *
- * The newest release a source names must be fresh ({@see ReleaseListFreshness}, matrix 3): its signed `list_version`
- * not lower than the highest this site saw for the product and channel ({@see ReleaseListState}) and its `expires_at`
- * not passed, else `update_release_list_stale`; the update server must carry both, github.com and a folder may omit
- * them. A frozen answer is refused even when it is «not newer»: an old description must not hide a newer release.
+ * The update server's newest release comes through its signed channel index ({@see ReleaseIndex}, matrix 3): first
+ * `<source>/index.json` and its signature — fresh (`expires_at` not passed, `list_version` not lower than the highest
+ * this site saw, {@see ReleaseListState}), else `update_release_list_stale` / `update_release_list_invalid` — then the
+ * exact release it names (`<source>/download/<tag>/release.json`), whose bytes must hash to the index's
+ * `release_sha256` (`update_release_index_mismatch`). A frozen index is refused even when it would say «not newer».
+ * github.com and a folder have no index: their newest release is read as before.
  *
- * A revoked release (matrix 5): the update server answers 410 with `{"code":"release_revoked","version","fixed_in"}`.
- * That is a typed outcome ({@see ReleaseRevoked}, reason `update_release_revoked`, {@see revoked()}), never installed.
- * After a check answered, a site with a {@see RevokedReleaseState} also asks the same update server for the installed
- * version's own description (`<source>/download/<tag>/release.json`, not github.com, not a folder): a 410 there marks
- * «the installed version is revoked» for the page and the alert bar; a newer installed version clears it. That
- * question never fails a check.
+ * A revoked release (matrix 5): the index lists revoked versions; when the installed version is among them, a site
+ * with a {@see RevokedReleaseState} keeps «the installed version is revoked» for the page and the alert bar (and
+ * forgets it when a fresh index no longer lists it or a newer version runs); {@see revoked()} names it. A download the
+ * update server answers 410 `{"error":"release_revoked","version","fixed_in"}` is the typed refusal
+ * {@see ReleaseRevoked} (`update_release_revoked`), never installed.
  *
  * The release key list (matrix 6, 44): {@see keyList()} reads `keys.json` and `keys.json.sig` — `<source>/keys.json`
  * of the update server, `<folder>/keys.json` of a folder, the newest release's asset
@@ -131,7 +132,7 @@ final class ReleaseSource
         return $this->errors;
     }
 
-    /** The revocation the last call met (a 410 of the update server), or null. */
+    /** The revocation the last call met (the index lists the installed version, or a download answered 410), or null. */
     public function revoked(): ?ReleaseRevoked
     {
         return $this->revoked;
@@ -145,16 +146,13 @@ final class ReleaseSource
     {
         $this->errors = [];
         $this->revoked = null;
+        $this->revocations?->settle($installedVersion);
         foreach ($this->sources as $source) {
             try {
-                $offer = $this->latestFrom($source, $installedVersion, $channel);
+                return $this->latestFrom($source, $installedVersion, $channel);
             } catch (Throwable $exception) {
                 $this->errors[$source] = self::reason($exception, 'update_source_failed');
-                continue;
             }
-            $this->installedRevoked($source, $installedVersion);
-
-            return $offer;
         }
 
         throw new RuntimeException($this->failure());
@@ -163,59 +161,79 @@ final class ReleaseSource
     /** One source's newest release; null when it is not newer than the installed one. */
     private function latestFrom(string $source, string $installedVersion, string $channel): ?SourceRelease
     {
-        [$bytes, $signature] = $this->description($source, $this->latestBase($source));
-        // Signature first, then freshness, then «newer»: a frozen answer is stale even when it is not newer.
-        $this->verifier->signedBy($bytes, $signature);
-        $product = $this->verifier->product();
-        $listVersion = ReleaseListFreshness::check($bytes, ReleaseListFreshness::required($source), $this->now(),
-            $this->lists?->seen($product, $channel) ?? 0);
-        try {
-            $release = $this->verifier->verify($bytes, $signature, $installedVersion, $channel);
-        } catch (RuntimeException $exception) {
-            if ($exception->getMessage() !== 'release_not_newer') {
-                throw $exception;
-            }
-            $release = null; // product and channel held: the number is this product's
+        if (!ReleaseIndex::required($source)) {
+            [$bytes, $signature] = $this->description($source, $this->latestBase($source));
+
+            return $this->offer($source, $bytes, $signature, $installedVersion, $channel);
         }
-        if ($listVersion !== null) {
-            $this->lists?->see($product, $channel, $listVersion);
+        // The update server: its signed index first, then the exact release it names.
+        [$indexBytes, $indexSignature] = $this->signedPair($source, $source . '/', 'index.json', ReleaseIndex::MAX_BYTES, 'update_release_list_invalid');
+        $product = $this->verifier->product();
+        $index = ReleaseIndex::verify($indexBytes, $indexSignature, $this->verifier, $channel, $this->now(), $this->lists?->seen($product, $channel) ?? 0);
+        $this->lists?->see($product, $channel, $index->listVersion);
+        $this->noteRevocation($index, $installedVersion);
+        if (preg_match('/\A(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,7})\z/D', $installedVersion) === 1
+            && version_compare($index->latestVersion, $installedVersion, '<=')) {
+            return null;
+        }
+        [$bytes, $signature] = $this->description($source, $source . '/download/' . rawurlencode($this->tagPrefix . $index->latestVersion) . '/', $index->latestVersion);
+        if (!hash_equals($index->latestSha256, hash('sha256', $bytes))) {
+            throw new RuntimeException('update_release_index_mismatch');
+        }
+        $offer = $this->offer($source, $bytes, $signature, $installedVersion, $channel);
+        if ($offer !== null && $offer->release->version !== $index->latestVersion) {
+            throw new RuntimeException('update_release_index_mismatch');
         }
 
-        return $release === null ? null : new SourceRelease($source, $release);
+        return $offer;
+    }
+
+    private function offer(string $source, string $bytes, string $signature, string $installedVersion, string $channel): ?SourceRelease
+    {
+        try {
+            return new SourceRelease($source, $this->verifier->verify($bytes, $signature, $installedVersion, $channel));
+        } catch (RuntimeException $exception) {
+            if ($exception->getMessage() === 'release_not_newer') {
+                return null;
+            }
+            throw $exception;
+        }
+    }
+
+    /** What a fresh index says about the installed version, kept for the page and the alert bar. */
+    private function noteRevocation(ReleaseIndex $index, string $installedVersion): void
+    {
+        $revoked = $index->revocation($installedVersion);
+        if ($revoked === null) {
+            $this->revocations?->forget($installedVersion);
+
+            return;
+        }
+        $this->revoked = $revoked;
+        $this->revocations?->record($installedVersion, $revoked, $this->now());
     }
 
     /**
-     * Asks the update server that answered a check whether the installed version is revoked (its description answers
-     * 410), and keeps the answer in {@see RevokedReleaseState}. Without that state, for github.com and for a folder,
-     * nothing is asked. Any failure of this question is no answer: the check stands.
+     * A signed file and its detached signature (`<name>`, `<name>.sig`) of an HTTPS source; a missing one is
+     * `$missing`, a refusal keeps its licence or site key reason.
+     *
+     * @return array{0:string,1:string}
      */
-    private function installedRevoked(string $source, string $installedVersion): void
+    private function signedPair(string $source, string $base, string $name, int $limit, string $missing): array
     {
-        if ($this->revocations === null) {
-            return;
-        }
-        $this->revocations->settle($installedVersion);
-        if (self::folder($source) !== null || self::isGitHub($source)
-            || preg_match('/\A(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,7})\z/D', $installedVersion) !== 1) {
-            return;
-        }
-        try {
+        $files = [];
+        foreach ([$name => $limit, $name . '.sig' => self::MAX_SIGNATURE_BYTES] as $file => $max) {
             $response = $this->http->send(new UpdateHttpRequest(
-                'GET', $source . '/download/' . rawurlencode($this->tagPrefix . $installedVersion) . '/release.json', $this->headers($source),
-                timeoutSeconds: min(60, $this->timeoutSeconds), maxBytes: self::MAX_DESCRIPTION_BYTES, followRedirects: true,
-                connectTimeoutSeconds: $this->connectTimeoutSeconds,
+                'GET', $base . $file, $this->headers($source), timeoutSeconds: min(60, $this->timeoutSeconds), maxBytes: $max,
+                followRedirects: true, connectTimeoutSeconds: $this->connectTimeoutSeconds,
             ));
-        } catch (Throwable) {
-            return;
+            if (!$response->successful()) {
+                throw new RuntimeException($response->status === 404 ? $missing : $this->refusal($source, $response, 'update_download_failed'));
+            }
+            $files[] = $response->body;
         }
-        if ($response->status !== 410) {
-            return;
-        }
-        $revoked = ReleaseRevoked::fromAnswer($response->body, $installedVersion);
-        if ($revoked->version === $installedVersion) {
-            $this->revoked = $revoked;
-            $this->revocations->record($installedVersion, $revoked, $this->now());
-        }
+
+        return [$files[0], $files[1]];
     }
 
     /**

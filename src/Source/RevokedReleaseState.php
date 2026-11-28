@@ -8,7 +8,7 @@ use DateTimeImmutable;
 use JsonException;
 
 /**
- * «The installed version is revoked» (matrix 5), as the update server last said it ({@see ReleaseRevoked}), kept in the
+ * «The installed version is revoked» (matrix 5), as the update server's signed index last said it ({@see ReleaseIndex}), kept in the
  * update storage (`storage/app/larena/update/revoked.json`) outside every release: the page «Обновления» and the
  * admin's alert bar read it without the network. It is about one version only: {@see current()} gives it while that
  * version runs, and a newer installed version clears it ({@see settle()}). A file that cannot be read says nothing —
@@ -42,6 +42,14 @@ final readonly class RevokedReleaseState
             return;
         }
         $this->write(['version' => $installed, 'fixed_in' => $revoked->fixedIn, 'seen_at' => ($at ?? new DateTimeImmutable())->format(DATE_ATOM)]);
+    }
+
+    /** A fresh index no longer lists the installed version as revoked. */
+    public function forget(string $installed): void
+    {
+        if (($this->read()['version'] ?? null) === $installed) {
+            @unlink($this->file);
+        }
     }
 
     /** Clears a revocation of a version older than the installed one: a newer version is installed. */

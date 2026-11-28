@@ -117,8 +117,6 @@ final class MemoryLogger extends AbstractLogger
 
 final class UpdateClientTestKit
 {
-    /** Freshness fields of a release description the update server signs ({@see \Larena\UpdateClient\Source\ReleaseListFreshness}). */
-    public const FRESH = ['list_version' => 1, 'expires_at' => '2099-01-01T00:00:00+00:00'];
 
     /** A gzip tar with `artisan` and `public/index.php`, the shape a release archive has. */
     public static function tar(string $version): string
@@ -137,12 +135,11 @@ final class UpdateClientTestKit
 
     /**
      * A signed release: [release.json bytes, release.json.sig bytes, archive bytes]. The key is a throwaway pair made
-     * by the test; no real release key is ever in a repository. `$list`: the freshness fields (null: none, as GitHub).
+     * by the test; no real release key is ever in a repository.
      *
-     * @param array<string,mixed>|null $list
      * @return array{0:string,1:string,2:string}
      */
-    public static function release(string $version, string $secretKey, string $keyId = 'release.test', ?string $archive = null, string $minimum = '1.0.0', string $product = 'larena', ?array $list = self::FRESH): array
+    public static function release(string $version, string $secretKey, string $keyId = 'release.test', ?string $archive = null, string $minimum = '1.0.0', string $product = 'larena'): array
     {
         $archive ??= self::tar($version);
         $bytes = (string) json_encode([
@@ -151,10 +148,48 @@ final class UpdateClientTestKit
             'archive' => ['file' => 'larena-' . $version . '.tar.gz', 'sha256' => hash('sha256', $archive), 'bytes' => strlen($archive)],
             'packages' => ['larena/core' => str_repeat('a', 40)], 'backward_incompatible_migrations' => false,
             'notes' => ['en' => 'Release ' . $version],
-        ] + ($list ?? []), JSON_UNESCAPED_SLASHES);
+        ], JSON_UNESCAPED_SLASHES);
         $signature = (string) json_encode(['key_id' => $keyId, 'signature' => base64_encode(sodium_crypto_sign_detached($bytes, $secretKey))]);
 
         return [$bytes, $signature, $archive];
+    }
+
+    /**
+     * The signed channel index of the update server ({@see \Larena\UpdateClient\Source\ReleaseIndex}) naming
+     * `$releaseBytes` as the newest release: [index.json bytes, index.json.sig bytes]. `$fields` override any field.
+     *
+     * @param array<string,mixed> $fields
+     * @return array{0:string,1:string}
+     */
+    public static function index(string $releaseBytes, string $secretKey, string $keyId = 'release.test', array $fields = []): array
+    {
+        $release = (array) json_decode($releaseBytes, true);
+        $bytes = (string) json_encode($fields + [
+            'schema' => 'larena.release-index', 'product' => $release['product'] ?? 'larena', 'channel' => $release['channel'] ?? 'stable',
+            'list_version' => 1, 'expires_at' => '2099-01-01T00:00:00+00:00', 'signed_by' => $keyId,
+            'latest' => ['version' => $release['version'] ?? '0.0.0', 'release_sha256' => hash('sha256', $releaseBytes)], 'revoked' => [],
+        ], JSON_UNESCAPED_SLASHES);
+
+        return [$bytes, (string) json_encode(['key_id' => $keyId, 'signature' => base64_encode(sodium_crypto_sign_detached($bytes, $secretKey))])];
+    }
+
+    /**
+     * What the update server serves for a check: its index and the release it names, url => [status, body].
+     *
+     * @param array<string,mixed> $fields index fields to override
+     * @return array<string, array{0:int,1:string}>
+     */
+    public static function server(string $server, string $releaseBytes, string $releaseSignature, string $secretKey, string $keyId = 'release.test', array $fields = []): array
+    {
+        [$index, $indexSignature] = self::index($releaseBytes, $secretKey, $keyId, $fields);
+        $version = (string) (((array) json_decode($releaseBytes, true))['version'] ?? '');
+
+        return [
+            $server . '/index.json' => [200, $index],
+            $server . '/index.json.sig' => [200, $indexSignature],
+            $server . '/download/v' . $version . '/release.json' => [200, $releaseBytes],
+            $server . '/download/v' . $version . '/release.json.sig' => [200, $releaseSignature],
+        ];
     }
 
     public static function temp(string $name): string

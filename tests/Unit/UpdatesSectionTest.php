@@ -30,7 +30,7 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
     $pdo = new PDO('sqlite:' . $database);
     $pdo->exec(PdoUpdateExecutionStore::schema('sqlite'));
     [$release, $signature] = Kit::release('1.3.0', $secret);
-    $files = [$server . '/latest/download/release.json' => [200, $release], $server . '/latest/download/release.json.sig' => [200, $signature]];
+    $files = Kit::server($server, $release, $signature, $secret);
     $http = FakeUpdateHttpClient::serving($files);
     $client = static fn (): SiteUpdateClient => new SiteUpdateClient(
         ['trusted_keys' => ['release.test' => $public], 'site_root' => $root, 'sources' => [$server], 'download' => ['directory' => $root . '/downloads']],
@@ -53,7 +53,7 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
 
         Kit::check($updates->install('1.3.0', 'user:admin_identity:1') === ['done' => false, 'reason' => 'update_offer_unknown'] && $dispatched === [], 'Nothing is installed before a check offers it.');
         Kit::check($updates->check() === ['done' => true, 'reason' => 'update_available'], 'The check finds 1.3.0.');
-        Kit::check(count($http->requests) === 4 && str_ends_with($http->requests[0]->url, '/keys.json'), 'The check reads the key list, the description, its signature and whether the installed version is revoked.');
+        Kit::check(count($http->requests) === 5 && str_ends_with($http->requests[0]->url, '/keys.json') && str_ends_with($http->requests[1]->url, '/index.json'), 'The check reads the key list, the index and the release it names.');
         $view = $updates->overview();
         Kit::check($view['check']['status'] === 'available' && $view['check']['version'] === '1.3.0' && $view['check']['notes'] === ['en' => 'Release 1.3.0'], 'What is in it is kept.');
         $http->requests = [];
@@ -76,7 +76,7 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
 
         // Up to date, and a failure kept with its reason.
         [$same, $sameSig] = Kit::release('1.2.0', $secret);
-        $http2 = FakeUpdateHttpClient::serving([$server . '/latest/download/release.json' => [200, $same], $server . '/latest/download/release.json.sig' => [200, $sameSig]]);
+        $http2 = FakeUpdateHttpClient::serving(Kit::server($server, $same, $sameSig, $secret));
         $current = new SiteUpdates(static fn (): SiteUpdateClient => new SiteUpdateClient(
             ['trusted_keys' => ['release.test' => $public], 'site_root' => $root, 'sources' => [$server]],
             $root . '/releases/1.2.0', 'https://site.example.test', static fn (): PDO => new PDO('sqlite:' . $database), new MemoryLogger(), $http2,
