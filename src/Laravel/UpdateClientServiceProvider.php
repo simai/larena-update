@@ -229,6 +229,7 @@ final class UpdateClientServiceProvider extends ServiceProvider
     /**
      * The release keys of the integrity checks: the shipped and configured ones with the accepted signed key lists
      * merged over them (`storage/app/larena/update/release-keys.json`, {@see \Larena\UpdateClient\Release\ReleaseKeyState}).
+     * Keys whose purpose is `package-list` are left out: the integrity checks read no package list, only releases.
      *
      * @return array{0: array<string,string>, 1: list<string>}
      */
@@ -240,7 +241,7 @@ final class UpdateClientServiceProvider extends ServiceProvider
         try {
             $merged = (new \Larena\UpdateClient\Release\ReleaseKeyState($app->storagePath('app/larena/update/release-keys.json')))->trusted($keys, $revoked);
 
-            return [$merged['keys'], $merged['revoked']];
+            return [array_diff_key($merged['keys'], array_flip($merged['package_list'])), $merged['revoked']];
         } catch (\Throwable) {
             return [$keys, $revoked];
         }

@@ -15,10 +15,13 @@ use Throwable;
  * build — «the old key signs the new one» — and how a key is revoked by a signed file.
  *
  * `{"schema":"larena.release-keys","list_version":int,"expires_at":iso,"signed_by":"id",
- * "keys":[{"id","public_key","not_before"}],"revoked":["id",...]}` (`signed_by`: the id of the signing key), with a detached Ed25519 signature over its exact bytes in the format of `release.json.sig`
+ * "keys":[{"id","public_key","not_before","purpose"}],"revoked":["id",...]}` (`signed_by`: the id of the signing key), with a detached Ed25519 signature over its exact bytes in the format of `release.json.sig`
  * (`{"key_id","signature"}`). The signature must come from a key the site already trusts — shipped with the site,
  * from `.env`, or accepted from an earlier list — and not revoked; a key named in this list is never trusted to sign
  * it (a key can never authorise itself). `not_before` (ISO 8601 with offset): before it the new key signs nothing.
+ * `purpose` (optional): `release` (the default) or `package-list` — a key that verifies only package lists
+ * ({@see ReleaseSignatureVerifier::PURPOSE_PACKAGE_LIST}) and therefore never signs a key list; a known id keeps its
+ * purpose (a list cannot turn a list key into a release key, nor the other way round).
  *
  * Refusals: `update_keys_signature_invalid` (unknown, revoked or wrong signature — the reason code names which),
  * `update_keys_invalid` (shape, `signed_by` not the signing key, a key id that already names another key, a list that revokes its own signer).
@@ -34,6 +37,7 @@ final readonly class ReleaseKeyList
      * @param array<string,string>        $keys       key id => base64 public key, every one valid from `not_before`
      * @param array<string,DateTimeImmutable> $notBefore key id => from when it may sign
      * @param list<string>                $revoked
+     * @param array<string,string>        $purposes  key id => `release` or `package-list`
      */
     private function __construct(
         public int $listVersion,
@@ -42,20 +46,22 @@ final readonly class ReleaseKeyList
         public array $notBefore,
         public array $revoked,
         public string $signedBy,
+        public array $purposes = [],
     ) {
     }
 
     /**
      * @param array<string,string> $trusted key id => base64 public key the site trusts now (revoked ones left out)
      * @param list<string>         $revoked key ids no longer trusted
+     * @param list<string>         $packageListKeyIds trusted ids whose purpose is `package-list`: they sign no key list
      */
-    public static function verify(string $bytes, string $signature, array $trusted, array $revoked): self
+    public static function verify(string $bytes, string $signature, array $trusted, array $revoked, array $packageListKeyIds = []): self
     {
         if ($trusted === []) {
             throw new RuntimeException('update_keys_signature_invalid');
         }
         try {
-            $signer = (new ReleaseSignatureVerifier($trusted, $revoked))->signedBy($bytes, $signature, self::MAX_BYTES);
+            $signer = (new ReleaseSignatureVerifier($trusted, $revoked, 'larena', $packageListKeyIds))->signedBy($bytes, $signature, self::MAX_BYTES);
         } catch (Throwable $exception) {
             throw new RuntimeException($exception->getMessage() === 'release_files_invalid' ? 'update_keys_invalid' : 'update_keys_signature_invalid', 0, $exception);
         }
@@ -79,6 +85,7 @@ final readonly class ReleaseKeyList
         }
         $keys = [];
         $notBefore = [];
+        $purposes = [];
         foreach ($entries as $entry) {
             $id = is_array($entry) ? ($entry['id'] ?? null) : null;
             $key = is_array($entry) ? ($entry['public_key'] ?? null) : null;
@@ -91,8 +98,17 @@ final readonly class ReleaseKeyList
             if (isset($trusted[$id]) && !hash_equals($trusted[$id], (string) $key)) {
                 throw new RuntimeException('update_keys_invalid');
             }
+            $purpose = $entry['purpose'] ?? ReleaseSignatureVerifier::PURPOSE_RELEASE;
+            if ($purpose !== ReleaseSignatureVerifier::PURPOSE_RELEASE && $purpose !== ReleaseSignatureVerifier::PURPOSE_PACKAGE_LIST) {
+                throw new RuntimeException('update_keys_invalid');
+            }
+            // A known id keeps its purpose: shipped keys and keys without a purpose are release keys.
+            if ((isset($trusted[$id]) || in_array($id, $packageListKeyIds, true)) && ($purpose === ReleaseSignatureVerifier::PURPOSE_PACKAGE_LIST) !== in_array($id, $packageListKeyIds, true)) {
+                throw new RuntimeException('update_keys_invalid');
+            }
             $keys[$id] = (string) $key;
             $notBefore[$id] = self::date($entry['not_before'] ?? null);
+            $purposes[$id] = $purpose;
         }
         $revokedList = [];
         foreach ($revokedIds as $id) {
@@ -105,10 +121,17 @@ final readonly class ReleaseKeyList
             throw new RuntimeException('update_keys_invalid');
         }
         ksort($keys, SORT_STRING);
+        ksort($purposes, SORT_STRING);
         $revokedList = array_keys($revokedList);
         sort($revokedList, SORT_STRING);
 
-        return new self($version, $expiresAt, $keys, $notBefore, $revokedList, $signer);
+        return new self($version, $expiresAt, $keys, $notBefore, $revokedList, $signer, $purposes);
+    }
+
+    /** @return list<string> the ids of this list whose purpose is `package-list` */
+    public function packageListKeyIds(): array
+    {
+        return array_keys(array_filter($this->purposes, static fn (string $purpose): bool => $purpose === ReleaseSignatureVerifier::PURPOSE_PACKAGE_LIST));
     }
 
     /** @return array<string,string> the keys of this list that may sign at `$now` */

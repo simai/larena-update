@@ -202,6 +202,7 @@
     "src/Release/ReleaseKeyList.php",
     "src/Release/ReleaseKeyState.php",
     "tests/Unit/ReleaseKeyRotationTest.php",
+    "tests/Unit/KeyPurposeTest.php",
     "src/Source/ReleaseIndex.php",
     "tests/Unit/ReleaseIndexTest.php"
   ],

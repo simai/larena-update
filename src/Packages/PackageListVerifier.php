@@ -22,7 +22,8 @@ use Throwable;
  * was published: `product`, `package`, `version`, optional `revision`, `released_at`, `distribution` (`open` or
  * `closed`), `archive` (`file`, `sha256`, `bytes`), `requires` (`larena` and `packages`, version rules of
  * {@see VersionConstraint}) and `backward_incompatible_migrations`. So a key that only signs lists cannot make a
- * package: the archive's checksum is under the package's own signature.
+ * package: the archive's checksum is under the package's own signature. A `package-list` key (purpose in `keys.json`)
+ * signs the list only; a package release inside needs a release key.
  *
  * Refusals ({@see PackageBatchRefused}):
  * - `update_batch_signature_invalid` — the list's or a package release's signature fails (wrong, untrusted or revoked
@@ -49,7 +50,7 @@ final readonly class PackageListVerifier
     public function verify(string $listBytes, string $signatureBytes, string $channel, DateTimeImmutable $now, int $seenListVersion = 0): PackageList
     {
         try {
-            $keyId = $this->verifier->signedBy($listBytes, $signatureBytes, self::MAX_LIST_BYTES);
+            $keyId = $this->verifier->signedBy($listBytes, $signatureBytes, self::MAX_LIST_BYTES, ReleaseSignatureVerifier::PURPOSE_PACKAGE_LIST);
         } catch (Throwable $exception) {
             throw PackageBatchRefused::one(
                 $exception->getMessage() === 'release_files_invalid' ? 'update_batch_list_invalid' : 'update_batch_signature_invalid',

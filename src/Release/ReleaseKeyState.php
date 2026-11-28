@@ -21,6 +21,8 @@ use Throwable;
  *
  * Rules:
  * - revoked ids always win, also over the shipped keys and `.env`; once seen, a revocation is kept;
+ * - a key a list names with purpose `package-list` verifies only package lists ({@see trusted()} `package_list`) and
+ *   never signs a key list; the purpose is replayed with the chain, never read from the storage alone;
  * - `list_version` only grows: a lower one, or the same number with other bytes, is ignored (`update_keys_stale`);
  *   an expired list is ignored too — with a warning, never a lock-out: what was accepted before stays;
  * - an invalid signature or shape is refused (`update_keys_signature_invalid`, `update_keys_invalid`) and logged by
@@ -46,7 +48,7 @@ final readonly class ReleaseKeyState
      *
      * @param array<string,string> $shipped key id => base64 public key (distribution, configuration, `.env`)
      * @param list<string>         $revoked configured revoked ids
-     * @return array{keys: array<string,string>, revoked: list<string>, list_version: int}
+     * @return array{keys: array<string,string>, revoked: list<string>, list_version: int, package_list: list<string>}
      */
     public function trusted(array $shipped, array $revoked, ?DateTimeImmutable $now = null): array
     {
@@ -59,7 +61,10 @@ final readonly class ReleaseKeyState
             $keys[$id] ??= $key;
         }
 
-        return ['keys' => $keys, 'revoked' => $allRevoked, 'list_version' => $replay['list_version']];
+        $packageList = array_values(array_intersect($replay['package_list'], array_keys($replay['added'])));
+        $packageList = array_values(array_filter($packageList, static fn (string $id): bool => !isset($shipped[$id])));
+
+        return ['keys' => $keys, 'revoked' => $allRevoked, 'list_version' => $replay['list_version'], 'package_list' => self::ids($packageList)];
     }
 
     /**
@@ -78,7 +83,7 @@ final readonly class ReleaseKeyState
         $allRevoked = self::ids([...$revoked, ...$state['revoked'], ...$replay['revoked']]);
         $current = self::without($replay['steps'][count($replay['steps']) - 1], $allRevoked);
         try {
-            $list = ReleaseKeyList::verify($bytes, $signature, $current, $allRevoked);
+            $list = ReleaseKeyList::verify($bytes, $signature, $current, $allRevoked, $replay['package_list']);
         } catch (Throwable $exception) {
             return $this->outcome($state, 'refused', $exception->getMessage(), null, null, $now);
         }
@@ -135,7 +140,7 @@ final readonly class ReleaseKeyState
      * @param array<string,string>                        $shipped
      * @param list<string>                                $revoked
      * @return array{chain: list<array{bytes:string, signature:string}>, steps: list<array<string,string>>, added: array<string,string>,
-     *     revoked: list<string>, list_version: int}
+     *     revoked: list<string>, list_version: int, package_list: list<string>}
      */
     private function replay(array $chain, array $shipped, array $revoked, DateTimeImmutable $now): array
     {
@@ -144,24 +149,28 @@ final readonly class ReleaseKeyState
         $seenRevoked = [];
         $version = 0;
         $kept = [];
+        // Once named a list key, an id stays one for the rest of the chain: a purpose only narrows.
+        $packageList = [];
+        $broken = ['chain' => [], 'steps' => [$steps[0]], 'added' => [], 'revoked' => [], 'list_version' => 0, 'package_list' => []];
         foreach ($chain as $entry) {
             try {
-                $list = ReleaseKeyList::verify($entry['bytes'], $entry['signature'], self::without($steps[count($steps) - 1], [...$revoked, ...$seenRevoked]), [...$revoked, ...$seenRevoked]);
+                $list = ReleaseKeyList::verify($entry['bytes'], $entry['signature'], self::without($steps[count($steps) - 1], [...$revoked, ...$seenRevoked]), [...$revoked, ...$seenRevoked], $packageList);
             } catch (Throwable) {
                 // A broken chain is dropped whole: only the shipped keys stay.
-                return ['chain' => [], 'steps' => [$steps[0]], 'added' => [], 'revoked' => [], 'list_version' => 0];
+                return $broken;
             }
             if ($list->listVersion <= $version) {
-                return ['chain' => [], 'steps' => [$steps[0]], 'added' => [], 'revoked' => [], 'list_version' => 0];
+                return $broken;
             }
             $version = $list->listVersion;
             $seenRevoked = [...$seenRevoked, ...$list->revoked];
+            $packageList = self::ids([...$packageList, ...$list->packageListKeyIds()]);
             $added = $list->keysAt($now);
             $steps[] = $shipped + $added;
             $kept[] = $entry;
         }
 
-        return ['chain' => $kept, 'steps' => $steps, 'added' => $added, 'revoked' => self::ids($seenRevoked), 'list_version' => $version];
+        return ['chain' => $kept, 'steps' => $steps, 'added' => $added, 'revoked' => self::ids($seenRevoked), 'list_version' => $version, 'package_list' => $packageList];
     }
 
     /**

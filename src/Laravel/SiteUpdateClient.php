@@ -150,7 +150,9 @@ final readonly class SiteUpdateClient
      * revoked ids of the configuration, with the signed key lists the site accepted merged over them
      * ({@see ReleaseKeyState}): revoked ids always win, also over the shipped keys.
      *
-     * @return array{keys: array<string,string>, revoked: list<string>, list_version: int}
+     * `package_list`: the accepted keys whose purpose is `package-list` — they verify only package lists.
+     *
+     * @return array{keys: array<string,string>, revoked: list<string>, list_version: int, package_list: list<string>}
      */
     public function releaseKeys(): array
     {
@@ -159,7 +161,7 @@ final readonly class SiteUpdateClient
         try {
             return $this->keyState()->trusted($keys, $revoked);
         } catch (\Throwable) {
-            return ['keys' => $keys, 'revoked' => $revoked, 'list_version' => 0];
+            return ['keys' => $keys, 'revoked' => $revoked, 'list_version' => 0, 'package_list' => []];
         }
     }
 
@@ -252,7 +254,7 @@ final readonly class SiteUpdateClient
     {
         $keys = $this->releaseKeys();
 
-        return new ReleaseSignatureVerifier($keys['keys'], $keys['revoked'], $this->product());
+        return new ReleaseSignatureVerifier($keys['keys'], $keys['revoked'], $this->product(), $keys['package_list']);
     }
 
     public function source(): ReleaseSource

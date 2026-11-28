@@ -16,11 +16,18 @@ use RuntimeException;
  * The optional `files` object (`{"file": "files.json", "sha256", "bytes"}`) binds the release's file list
  * ({@see FileList}) to this signature; it is an optional field of schema version 1, so older releases still verify.
  * Every failure is a RuntimeException with a stable reason code and no secret in it.
+ *
+ * Key purpose (`purpose` of a key in `keys.json`, {@see ReleaseKeyList}): a `package-list` key verifies only package
+ * lists (`larena.package-list`, `packages.json`); every other signed file (release.json, a package release, index.json,
+ * keys.json, solution.json) needs a release key — purpose `release`, a shipped key or a key without a purpose. A list
+ * key over any of them is `release_key_purpose_differs`.
  */
 final readonly class ReleaseSignatureVerifier
 {
     public const SCHEMA = 'larena.release';
     public const SCHEMA_VERSION = 1;
+    public const PURPOSE_RELEASE = 'release';
+    public const PURPOSE_PACKAGE_LIST = 'package-list';
     private const MAX_RELEASE_BYTES = 262144;
     private const MAX_SIGNATURE_BYTES = 1024;
 
@@ -28,13 +35,15 @@ final readonly class ReleaseSignatureVerifier
     private array $keys;
 
     /**
-     * @param array<string,string> $trustedKeys  key id => base64 public key
+     * @param array<string,string> $trustedKeys       key id => base64 public key
      * @param list<string>         $revokedKeyIds
+     * @param list<string>         $packageListKeyIds trusted key ids whose purpose is `package-list`
      */
     public function __construct(
         array $trustedKeys,
         private array $revokedKeyIds = [],
         private string $product = 'larena',
+        private array $packageListKeyIds = [],
     ) {
         $keys = [];
         foreach ($trustedKeys as $id => $encoded) {
@@ -79,18 +88,26 @@ final readonly class ReleaseSignatureVerifier
      * Checks only the detached signature over exact bytes, by the same trusted and revoked keys and with the same
      * reason codes as {@see verify()}, and returns the key id. Other signed files (the package list and the package
      * releases in it) are read by their own owners after this.
+     *
+     * @param string $purpose what the bytes are: {@see PURPOSE_PACKAGE_LIST} only for a package list, else a release
      */
-    public function signedBy(string $bytes, string $signatureBytes, int $maxBytes = self::MAX_RELEASE_BYTES): string
+    public function signedBy(string $bytes, string $signatureBytes, int $maxBytes = self::MAX_RELEASE_BYTES, string $purpose = self::PURPOSE_RELEASE): string
     {
         if (strlen($bytes) < 2 || strlen($bytes) > $maxBytes
             || strlen($signatureBytes) < 2 || strlen($signatureBytes) > self::MAX_SIGNATURE_BYTES) {
             throw new RuntimeException('release_files_invalid');
         }
 
-        return $this->signature($bytes, $signatureBytes);
+        return $this->signature($bytes, $signatureBytes, $purpose);
     }
 
-    private function signature(string $releaseBytes, string $signatureBytes): string
+    /** Whether a trusted key may sign only package lists. */
+    public function isPackageListKey(string $keyId): bool
+    {
+        return in_array($keyId, $this->packageListKeyIds, true);
+    }
+
+    private function signature(string $releaseBytes, string $signatureBytes, string $purpose): string
     {
         $signature = self::json($signatureBytes, 'release_signature_invalid');
         $keyId = $signature['key_id'] ?? null;
@@ -104,6 +121,10 @@ final readonly class ReleaseSignatureVerifier
         $key = $this->keys[$keyId] ?? throw new RuntimeException('release_key_untrusted');
         if (!sodium_crypto_sign_verify_detached($value, $releaseBytes, $key)) {
             throw new RuntimeException('release_signature_mismatch');
+        }
+        // A package-list key signs package lists only, never a release, an index, a key list or a solution.
+        if ($purpose !== self::PURPOSE_PACKAGE_LIST && $this->isPackageListKey($keyId)) {
+            throw new RuntimeException('release_key_purpose_differs');
         }
 
         return $keyId;

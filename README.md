@@ -80,7 +80,7 @@ site or a test stand adds its own in `.env` as
 `LARENA_UPDATE_TRUSTED_KEYS=id=base64,id2=base64` (a malformed pair or a value
 that is not 32 bytes after base64 is ignored; `revoked_key_ids` still win).
 Keys change without a new build through a signed key list (`Release\ReleaseKeyList`): `keys.json`
-(`{"schema":"larena.release-keys","list_version","expires_at","signed_by","keys":[{"id","public_key","not_before"}],"revoked":[…]}`)
+(`{"schema":"larena.release-keys","list_version","expires_at","signed_by","keys":[{"id","public_key","not_before","purpose"}],"revoked":[…]}`)
 with `keys.json.sig` (the `release.json.sig` format) at `<source>/keys.json` (a folder: `<folder>/keys.json`;
 github.com: the newest release's asset), signed by a key the site already trusts — «the old key signs the new one»;
 a key never authorises itself. `larena:update:check` and «Проверить сейчас» refresh it first. Accepted lists are kept
@@ -90,6 +90,9 @@ batches and the integrity checks. Revoked ids always win, also over the shipped 
 list is ignored with a warning (`update_keys_stale`, `update_keys_expired`: the accepted keys stay); a bad signature
 or shape is refused and logged (`update_keys_signature_invalid`, `update_keys_invalid`). `larena:update:status`
 shows the list version, the revoked ids and the last refresh.
+A key's `purpose` is `release` (the default; shipped keys are release keys) or `package-list`: a package-list key
+verifies only package lists (`packages.json`) and never a release, a package release, `index.json`, `keys.json` or a
+solution (`release_key_purpose_differs`); a known id keeps its purpose.
 A refused download names its reason: `update_license_required`,
 `update_license_expired`, `update_license_revoked` (the update server's
 `license_*` code), `update_site_key_required` (no site key) or
