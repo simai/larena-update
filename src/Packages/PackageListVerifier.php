@@ -21,7 +21,8 @@ use Throwable;
  * Each `release` is a package release (`larena.package-release`, schema_version 1) signed on its own when the package
  * was published: `product`, `package`, `version`, optional `revision`, `released_at`, `distribution` (`open` or
  * `closed`), `archive` (`file`, `sha256`, `bytes`), `requires` (`larena` and `packages`, version rules of
- * {@see VersionConstraint}) and `backward_incompatible_migrations`. So a key that only signs lists cannot make a
+ * {@see VersionConstraint}), `backward_incompatible_migrations` and optional `settings` (the setting keys its
+ * module.yaml declares). So a key that only signs lists cannot make a
  * package: the archive's checksum is under the package's own signature. A `package-list` key (purpose in `keys.json`)
  * signs the list only; a package release inside needs a release key.
  *
@@ -41,6 +42,8 @@ final readonly class PackageListVerifier
     private const CLOCK_SKEW_SECONDS = 300;
     private const PACKAGE = '/\A[a-z0-9][a-z0-9_.-]{0,99}\/[a-z0-9][a-z0-9_.-]{0,99}\z/D';
     private const VERSION = '/\A(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,7})\z/D';
+    /** A setting key: dotted lower-case words (`shop.currency`). */
+    public const SETTING = '/\A[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63}){1,7}\z/D';
 
     public function __construct(private ReleaseSignatureVerifier $verifier)
     {
@@ -175,10 +178,24 @@ final readonly class PackageListVerifier
         if (!is_bool($incompatible)) {
             throw self::invalid($package, 'backward_incompatible_migrations');
         }
+        // Optional: the setting keys the package declares (its module.yaml `settings`).
+        $settings = $data['settings'] ?? null;
+        if ($settings !== null) {
+            if (!is_array($settings) || !array_is_list($settings) || count($settings) > 512) {
+                throw self::invalid($package, 'settings');
+            }
+            foreach ($settings as $key) {
+                if (!is_string($key) || preg_match(self::SETTING, $key) !== 1) {
+                    throw self::invalid($package, 'settings');
+                }
+            }
+            $settings = array_values(array_unique($settings));
+            sort($settings, SORT_STRING);
+        }
 
         return new PackageRelease(
             $package, $version, $revision, self::date($data['released_at'] ?? null, $package, 'released_at'), $distribution,
-            $archive['file'], $archive['sha256'], $archive['bytes'], $larena, $packages, $incompatible, $keyId, $bytes, $signature,
+            $archive['file'], $archive['sha256'], $archive['bytes'], $larena, $packages, $incompatible, $keyId, $bytes, $signature, $settings,
         );
     }
 

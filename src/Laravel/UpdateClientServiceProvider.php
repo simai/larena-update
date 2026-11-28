@@ -359,6 +359,7 @@ final class UpdateClientServiceProvider extends ServiceProvider
                 UpdateApplyCommand::class,
                 UpdatePackagesCommand::class,
                 UpdateRemoveCommand::class,
+                \Larena\UpdateClient\Laravel\Console\SolutionCheckCommand::class,
                 UpdateRollbackCommand::class,
                 UpdateStatusCommand::class,
                 UpdateRecoverCommand::class,

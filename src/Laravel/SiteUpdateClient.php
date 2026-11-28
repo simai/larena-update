@@ -410,6 +410,35 @@ final readonly class SiteUpdateClient
         return new SiteLicensingUpdateLicence($licensing instanceof \Larena\Licensing\Site\SiteLicensing ? $licensing : null);
     }
 
+    /**
+     * The solution check (§14 stage 4, S1–S2): the release keys of this site, the batch planner over its licence, and
+     * the given rights and content readers. Nothing it does writes.
+     */
+    public function solutionCheck(\Larena\UpdateClient\Solutions\SolutionRights $rights, \Larena\UpdateClient\Solutions\SolutionSiteContent $content): \Larena\UpdateClient\Solutions\SolutionCheck
+    {
+        return new \Larena\UpdateClient\Solutions\SolutionCheck(
+            new \Larena\UpdateClient\Solutions\SolutionVerifier($this->verifier()),
+            new \Larena\UpdateClient\Packages\PackageBatchPlanner($this->packageLicence()),
+            $rights,
+            $content,
+        );
+    }
+
+    /**
+     * The signed package list of the sources, verified against the highest list version this site saw — read only: a
+     * check does not move that number ({@see PackageListState::see()} is for an install).
+     *
+     * @return Closure(): \Larena\UpdateClient\Packages\PackageList
+     */
+    public function packageListReader(): Closure
+    {
+        return function (): \Larena\UpdateClient\Packages\PackageList {
+            [$bytes, $signature] = $this->packageSource()->list();
+
+            return $this->packageListVerifier()->verify($bytes, $signature, $this->channel(), new \DateTimeImmutable(), $this->packageListState()->seen());
+        };
+    }
+
     public function packageCandidate(PackageBatch $batch): PackageBatchCandidate
     {
         return new PackageBatchCandidate($this->verifier(), new ReleaseArchiveExtractor(), $this->packageLicence(), $batch, $this->channel());

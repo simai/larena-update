@@ -44,6 +44,9 @@ health address `GET /_larena/update/health` (answers
 - `larena:update:remove <vendor/name>` — say whether an addon can be removed;
   with `--apply --actor=<subject_ref>` remove its code in one cycle, its data
   kept read-only (see «Removing an addon» below);
+- `larena:solution:check <dir|solution.json> [--json]` — check a signed solution
+  against this site and print the plan or every refusal; writes nothing (see
+  «Solutions» below);
 - `larena:update:rollback --actor=<subject_ref>` — back to the previous release
   (database from the copy unless `--keep-database`);
 - `larena:update:recover --actor=<subject_ref> --confirm=<cycle id>` — leave
@@ -174,6 +177,28 @@ the cycle, larena/licensing notes «removed addon, data kept» (`SiteDataAccess:
 are read-only until `larena:update:packages --only=<vendor/name> --apply` installs it again (same or newer version),
 which takes the note off. Only an addon a batch added can be removed (`update_remove_not_addon` for a product package,
 `update_remove_not_installed`, `update_remove_required` when another installed package requires it).
+
+## Solutions
+
+§14 stage 4, S1–S2 (matrix 34–35); installing and rolling back come next. A solution is a folder with `solution.json`,
+`solution.json.sig` (the `release.json.sig` format, signed by a release key only — never a `package-list` key) and its
+SitePack: `{"schema":"larena.solution","schema_version":1,"id","version","product","product_version":"<rule>",
+"packages":[{"name","version":"<rule>","capability":"<id>"|null}],"sitepack":{"ref":"<file>","sha256"}|null,
+"settings":{"<key>":<value>}}` (rules of `Packages\VersionConstraint`). `larena:solution:check` (`Solutions\SolutionCheck`)
+decides before anything is written:
+
+- S1 (`Solutions\SolutionVerifier`): signature, shape, product, the site's version in `product_version`, the SitePack's
+  checksum, no secret in `settings` (a key or a value that looks like a password, key or token: only the key is named),
+  and only keys the packages declare — the optional signed `settings` of a package release (copied from its
+  `module.yaml` `settings` when it is published), or the `module.yaml` `settings` of a package already installed;
+- S2, all refusals together: every package with a capability the licence does not allow in one
+  `solution_rights_missing` with «Попробовать 14 дней» (trial, days from the capability catalog) and «Купить» (the
+  addon's shop page) per addon (`Laravel\SiteSolutionRights`); a site that is not clean where the SitePack goes
+  (`solution_site_not_empty`, the structure and its own records named; the untouched starter Home page does not count,
+  `Laravel\StorageSolutionSiteContent`, read only); packages from the signed package list in the solution's rule and
+  the batch planner's own refusals (`update_batch_*`).
+
+Words: `integrity.reasons.solution_*` and `solutions.*` in ru and en.
 
 ## Admin: «Лицензия и обновления» → «Обновления»
 
