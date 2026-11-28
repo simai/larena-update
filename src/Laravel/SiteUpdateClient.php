@@ -25,6 +25,7 @@ use Larena\UpdateClient\Packages\PackageUpdateLicence;
 use Larena\UpdateClient\Packages\SiteLicensingUpdateLicence;
 use Larena\UpdateClient\Release\ReleaseArchiveExtractor;
 use Larena\UpdateClient\Release\ReleaseDirectory;
+use Larena\UpdateClient\Release\ReleaseKeyState;
 use Larena\UpdateClient\Release\ReleasePointer;
 use Larena\UpdateClient\Release\ReleaseSignatureVerifier;
 use Larena\UpdateClient\Release\ReleaseUpdateCycle;
@@ -137,12 +138,85 @@ final readonly class SiteUpdateClient
         return is_string($url) && trim($url) !== '' ? trim($url) : $this->appUrl;
     }
 
-    /** @return list<string> */
+    /** @return list<string> the key ids releases are verified with: shipped, configured and accepted from key lists */
     public function trustedKeyIds(): array
+    {
+        return array_keys($this->releaseKeys()['keys']);
+    }
+
+    /**
+     * The release keys: those the site ships with (`config/larena-release-keys.php`, `trusted_keys`, `.env`) and the
+     * revoked ids of the configuration, with the signed key lists the site accepted merged over them
+     * ({@see ReleaseKeyState}): revoked ids always win, also over the shipped keys.
+     *
+     * @return array{keys: array<string,string>, revoked: list<string>, list_version: int}
+     */
+    public function releaseKeys(): array
+    {
+        $keys = $this->shippedKeys();
+        $revoked = $this->configuredRevokedKeyIds();
+        try {
+            return $this->keyState()->trusted($keys, $revoked);
+        } catch (\Throwable) {
+            return ['keys' => $keys, 'revoked' => $revoked, 'list_version' => 0];
+        }
+    }
+
+    /** The accepted release key lists, in the shared storage. */
+    public function keyState(): ReleaseKeyState
+    {
+        return ReleaseKeyState::forSite($this->siteRoot());
+    }
+
+    /**
+     * Fetches the signed release key list from the sources and hands it to {@see ReleaseKeyState} (matrix 6): accepted,
+     * unchanged, ignored with a warning (stale or expired: the site keeps what it had), refused and logged (a bad
+     * signature or shape), `none` (no source has one) or `unavailable`. Never throws: a key list never stops a check.
+     *
+     * @return array{result: string, reason: ?string, list_version: ?int, signed_by: ?string}
+     */
+    public function refreshKeys(): array
+    {
+        try {
+            $state = $this->keyState();
+            $found = $this->source()->keyList();
+            if ($found === null) {
+                $state->note('none', null);
+
+                return ['result' => 'none', 'reason' => null, 'list_version' => null, 'signed_by' => null];
+            }
+            $outcome = $state->accept($found['bytes'], $found['signature'], $this->shippedKeys(), $this->configuredRevokedKeyIds());
+        } catch (\Throwable $exception) {
+            $reason = $exception instanceof RuntimeException && preg_match('/\A[a-z][a-z0-9_.-]{0,99}\z/D', $exception->getMessage()) === 1
+                ? $exception->getMessage() : 'update_keys_refresh_failed';
+
+            return ['result' => 'unavailable', 'reason' => $reason, 'list_version' => null, 'signed_by' => null];
+        }
+        if ($outcome['result'] === 'refused') {
+            $this->logger->error('Larena update: the release key list was refused.', ['reason' => $outcome['reason'], 'source' => $found['source']]);
+        } elseif ($outcome['result'] === 'ignored') {
+            $this->logger->warning('Larena update: the release key list was ignored; the keys stay as they were.', ['reason' => $outcome['reason'], 'list_version' => $outcome['list_version']]);
+        } elseif ($outcome['result'] === 'accepted') {
+            $this->logger->info('Larena update: a new release key list was accepted.', ['list_version' => $outcome['list_version'], 'signed_by' => $outcome['signed_by']]);
+        }
+
+        return $outcome;
+    }
+
+    /** @return array<string,string> */
+    private function shippedKeys(): array
     {
         $keys = $this->config['trusted_keys'] ?? [];
 
-        return is_array($keys) ? array_values(array_filter(array_keys($keys), 'is_string')) : [];
+        return is_array($keys) ? array_filter($keys, static fn (mixed $key, mixed $id): bool => is_string($id) && is_string($key), ARRAY_FILTER_USE_BOTH) : [];
+    }
+
+    /** @return list<string> */
+    private function configuredRevokedKeyIds(): array
+    {
+        $revoked = $this->config['revoked_key_ids'] ?? [];
+
+        return is_array($revoked) ? array_values(array_filter($revoked, 'is_string')) : [];
     }
 
     /** @return list<string> */
@@ -175,14 +249,9 @@ final readonly class SiteUpdateClient
 
     public function verifier(): ReleaseSignatureVerifier
     {
-        $keys = $this->config['trusted_keys'] ?? [];
-        $revoked = $this->config['revoked_key_ids'] ?? [];
+        $keys = $this->releaseKeys();
 
-        return new ReleaseSignatureVerifier(
-            is_array($keys) ? $keys : [],
-            is_array($revoked) ? array_values(array_filter($revoked, 'is_string')) : [],
-            $this->product(),
-        );
+        return new ReleaseSignatureVerifier($keys['keys'], $keys['revoked'], $this->product());
     }
 
     public function source(): ReleaseSource

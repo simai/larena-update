@@ -196,7 +196,10 @@
     "src/Source/ReleaseRevoked.php",
     "src/Source/RevokedReleaseState.php",
     "src/Laravel/Admin/UpdatesAdminAlertSource.php",
-    "tests/Unit/RevokedReleaseTest.php"
+    "tests/Unit/RevokedReleaseTest.php",
+    "src/Release/ReleaseKeyList.php",
+    "src/Release/ReleaseKeyState.php",
+    "tests/Unit/ReleaseKeyRotationTest.php"
   ],
   "forbidden_files": [
     "resources/*",

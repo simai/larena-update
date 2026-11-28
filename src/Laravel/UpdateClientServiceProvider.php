@@ -104,7 +104,9 @@ final class UpdateClientServiceProvider extends ServiceProvider
                 IntegrityLayout::sourceInstallMarked($config->get('update-client.integrity.source_install')),
             );
 
-            return new SiteIntegrity($layout, self::trustedKeys($config), self::revokedKeys($config), $app->make(IntegrityHistory::class), self::product($config));
+            [$keys, $revoked] = self::releaseKeys($app);
+
+            return new SiteIntegrity($layout, $keys, $revoked, $app->make(IntegrityHistory::class), self::product($config));
         });
         $this->app->singletonIf(IntegrityHistory::class, static fn (Application $app): IntegrityHistory => new AuditIntegrityHistory(
             $app->make(LoggerInterface::class),
@@ -121,8 +123,7 @@ final class UpdateClientServiceProvider extends ServiceProvider
         if (interface_exists(\Larena\Core\Contracts\InstalledReleaseSeal::class)) {
             $this->app->bind(\Larena\Core\Contracts\InstalledReleaseSeal::class, static fn (Application $app): \Larena\Core\Contracts\InstalledReleaseSeal
                 => new \Larena\UpdateClient\Laravel\Integrity\SiteInstalledReleaseSeal(new ReleaseSealer(
-                    self::trustedKeys($app->make(ConfigRepository::class)), self::revokedKeys($app->make(ConfigRepository::class)),
-                    product: self::product($app->make(ConfigRepository::class)))));
+                    ...self::releaseKeys($app), product: self::product($app->make(ConfigRepository::class)))));
         }
         $this->app->bind(\Larena\UpdateClient\Laravel\Admin\SiteUpdates::class, static fn (Application $app): \Larena\UpdateClient\Laravel\Admin\SiteUpdates
             => new \Larena\UpdateClient\Laravel\Admin\SiteUpdates(
@@ -222,6 +223,26 @@ final class UpdateClientServiceProvider extends ServiceProvider
         return static fn (string $version, string $actor, string $key): string => $app->make(\Larena\Queue\Runtime\DurableQueueDispatcher::class)
             ->dispatch(new \Larena\Queue\Data\DispatchRequest(\Larena\UpdateClient\Laravel\Admin\SiteUpdates::JOB_TYPE,
                 ['version' => $version, 'actor' => $actor, 'idempotency_key' => $key], $key, 'update:' . bin2hex(random_bytes(8))))->jobId;
+    }
+
+    /**
+     * The release keys of the integrity checks: the shipped and configured ones with the accepted signed key lists
+     * merged over them (`storage/app/larena/update/release-keys.json`, {@see \Larena\UpdateClient\Release\ReleaseKeyState}).
+     *
+     * @return array{0: array<string,string>, 1: list<string>}
+     */
+    private static function releaseKeys(Application $app): array
+    {
+        $config = $app->make(ConfigRepository::class);
+        $keys = self::trustedKeys($config);
+        $revoked = self::revokedKeys($config);
+        try {
+            $merged = (new \Larena\UpdateClient\Release\ReleaseKeyState($app->storagePath('app/larena/update/release-keys.json')))->trusted($keys, $revoked);
+
+            return [$merged['keys'], $merged['revoked']];
+        } catch (\Throwable) {
+            return [$keys, $revoked];
+        }
     }
 
     /** @return array<string,string> */

@@ -99,6 +99,7 @@ final readonly class SiteUpdates
         try {
             $client = ($this->client)();
             $installed = $client->installedVersion();
+            $client->refreshKeys();
             $source = $client->source();
             $offer = $source->latest($installed, $client->channel());
         } catch (Throwable $exception) {

@@ -57,6 +57,11 @@ use Throwable;
  * version's own description (`<source>/download/<tag>/release.json`, not github.com, not a folder): a 410 there marks
  * «the installed version is revoked» for the page and the alert bar; a newer installed version clears it. That
  * question never fails a check.
+ *
+ * The release key list (matrix 6, 44): {@see keyList()} reads `keys.json` and `keys.json.sig` — `<source>/keys.json`
+ * of the update server, `<folder>/keys.json` of a folder, the newest release's asset
+ * (`<source>/latest/download/keys.json`) of a github.com page — with the same transport rules; it is checked and kept
+ * by {@see \Larena\UpdateClient\Release\ReleaseKeyState}, not here.
  */
 final class ReleaseSource
 {
@@ -211,6 +216,48 @@ final class ReleaseSource
             $this->revoked = $revoked;
             $this->revocations->record($installedVersion, $revoked, $this->now());
         }
+    }
+
+    /**
+     * The release key list of the first source that has one, unchecked (only its size is limited): null when no source
+     * has it; the reasons stay in {@see errors()} (`update_keys_not_found` for a source without one).
+     *
+     * @return array{source:string, bytes:string, signature:string}|null
+     */
+    public function keyList(): ?array
+    {
+        $this->errors = [];
+        foreach ($this->sources as $source) {
+            try {
+                $folder = self::folder($source);
+                $base = $folder !== null ? $folder . '/' : (self::isGitHub($source) ? $source . '/latest/download/' : $source . '/');
+                $files = [];
+                foreach (['keys.json' => \Larena\UpdateClient\Release\ReleaseKeyList::MAX_BYTES, 'keys.json.sig' => self::MAX_SIGNATURE_BYTES] as $name => $limit) {
+                    if ($folder !== null) {
+                        try {
+                            $files[] = self::readFile($base . $name, $limit);
+                        } catch (RuntimeException $exception) {
+                            throw new RuntimeException($exception->getMessage() === 'update_release_not_found' ? 'update_keys_not_found' : $exception->getMessage());
+                        }
+                        continue;
+                    }
+                    $response = $this->http->send(new UpdateHttpRequest(
+                        'GET', $base . $name, $this->headers($source), timeoutSeconds: min(60, $this->timeoutSeconds), maxBytes: $limit,
+                        followRedirects: true, connectTimeoutSeconds: $this->connectTimeoutSeconds,
+                    ));
+                    if (!$response->successful()) {
+                        throw new RuntimeException($response->status === 404 ? 'update_keys_not_found' : $this->refusal($source, $response, 'update_keys_download_failed'));
+                    }
+                    $files[] = $response->body;
+                }
+
+                return ['source' => $source, 'bytes' => $files[0], 'signature' => $files[1]];
+            } catch (Throwable $exception) {
+                $this->errors[$source] = self::reason($exception, 'update_keys_download_failed');
+            }
+        }
+
+        return null;
     }
 
     /** Fetches and checks one exact version; see the class description for the order of checks. */

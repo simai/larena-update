@@ -62,6 +62,7 @@ final class UpdateStatusCommand extends UpdateCommand
                 'store_reason' => $storeReason,
                 'cycles' => $cycles,
                 'revoked' => $revoked,
+                'key_list' => self::keyList($client),
             ], static fn (mixed $value): bool => $value !== null);
         }, static function (array $payload): array {
             $lines = [
@@ -71,6 +72,11 @@ final class UpdateStatusCommand extends UpdateCommand
                 'Update sources: ' . ((array) $payload['sources'] === [] ? 'none configured' : implode(', ', (array) $payload['sources'])) . '.',
                 'Trusted release keys: ' . ((array) $payload['trusted_key_ids'] === [] ? 'none configured — updates are refused' : implode(', ', (array) $payload['trusted_key_ids'])) . '.',
             ];
+            $keyList = is_array($payload['key_list'] ?? null) ? $payload['key_list'] : [];
+            $last = is_array($keyList['last'] ?? null) ? $keyList['last'] : null;
+            $lines[] = 'Release key list: ' . (($keyList['list_version'] ?? 0) > 0 ? 'version ' . $keyList['list_version'] : 'none accepted')
+                . (($keyList['revoked'] ?? []) !== [] ? ', revoked ' . implode(', ', (array) $keyList['revoked']) : '')
+                . ($last !== null ? '; last refresh ' . $last['at'] . ': ' . $last['result'] . (isset($last['reason']) ? ' (' . $last['reason'] . ')' : '') : '') . '.';
             if (is_array($payload['revoked'] ?? null)) {
                 $lines[] = 'This version is revoked by the update server — update urgently'
                     . (is_string($payload['revoked']['fixed_in'] ?? null) ? ' (fixed in ' . $payload['revoked']['fixed_in'] . ').' : '.');
@@ -100,5 +106,18 @@ final class UpdateStatusCommand extends UpdateCommand
 
             return $lines;
         }, ['ok']);
+    }
+
+    /** @return array{list_version:int, revoked:list<string>, last:?array<string,mixed>} */
+    private static function keyList(SiteUpdateClient $client): array
+    {
+        $keys = $client->releaseKeys();
+        try {
+            $last = $client->keyState()->last();
+        } catch (Throwable) {
+            $last = null;
+        }
+
+        return ['list_version' => $keys['list_version'], 'revoked' => $keys['revoked'], 'last' => $last];
     }
 }

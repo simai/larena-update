@@ -53,7 +53,7 @@ use Larena\UpdateClient\Tests\Support\UpdateClientTestKit as Kit;
 
         Kit::check($updates->install('1.3.0', 'user:admin_identity:1') === ['done' => false, 'reason' => 'update_offer_unknown'] && $dispatched === [], 'Nothing is installed before a check offers it.');
         Kit::check($updates->check() === ['done' => true, 'reason' => 'update_available'], 'The check finds 1.3.0.');
-        Kit::check(count($http->requests) === 3, 'The check reads the description, its signature and whether the installed version is revoked.');
+        Kit::check(count($http->requests) === 4 && str_ends_with($http->requests[0]->url, '/keys.json'), 'The check reads the key list, the description, its signature and whether the installed version is revoked.');
         $view = $updates->overview();
         Kit::check($view['check']['status'] === 'available' && $view['check']['version'] === '1.3.0' && $view['check']['notes'] === ['en' => 'Release 1.3.0'], 'What is in it is kept.');
         $http->requests = [];
